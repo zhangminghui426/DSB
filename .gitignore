@@ -1,0 +1,25 @@
+# 编译产物
+build/
+outputs/
+
+# 权重、检查点（一般不上传git）
+ckpts/
+
+# 数据集
+data/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+
+# 日志
+logs/
+
+# ide
+.vscode/
+.idea/
+*.swp
