@@ -48,6 +48,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     | tee /etc/apt/sources.list.d/ros2.list > /dev/null \
     && apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-ros-base \
+    ros-humble-ros2bag \
+    ros-humble-rosbag2 \
+    ros-humble-rosbag2-storage-mcap \
+    ros-humble-rosbag2-transport \
+    ros-humble-image-tools \
+    ros-humble-cv-bridge \
+    ros-humble-pcl-conversions \
+    ros-humble-pcl-ros \
     python3-colcon-common-extensions \
     python3-rosdep \
     python3-vcstool \
