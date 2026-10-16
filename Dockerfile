@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/tensorrt:25.03-py3
+FROM nvcr.io/nvidia/tensorrt:25.02-py3
 
 LABEL maintainer="zhangminghui"
 LABEL description="DSB: bevfusion + flashocc + fast_calib development environment"
