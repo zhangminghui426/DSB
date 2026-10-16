@@ -1,4 +1,4 @@
-"""circle_nms (numba-jitted) for detection post-processing.
+""" circle_nms (numba-jitted) for detection post-processing.
 """
 
 import numba
@@ -7,7 +7,7 @@ import numpy as np
 
 @numba.jit(nopython=True)
 def circle_nms(dets, thresh, post_max_size=83):
-    """Circular NMS.
+    """ Circular NMS.
 
     An object is only counted as positive if no other center
     with a higher confidence exists within a radius r using a
