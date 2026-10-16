@@ -52,9 +52,16 @@ RUN pip install --no-cache-dir \
     torchaudio==2.8.0 \
     --index-url https://download.pytorch.org/whl/cu128
 
-# ========== TensorRT 10.9 ==========
-RUN pip install --no-cache-dir \
-    tensorrt==10.9.0.34
+# ========== TensorRT 10.9 (tarball install) ==========
+COPY TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz /tmp/tensorrt.tar.gz
+RUN tar -xzf /tmp/tensorrt.tar.gz -C /opt \
+    && mv /opt/TensorRT-10.9.0.34 /opt/tensorrt \
+    && rm /tmp/tensorrt.tar.gz \
+    && pip install --no-cache-dir /opt/tensorrt/python/tensorrt-10.9.0-cp310-none-linux_x86_64.whl
+
+ENV TRT_HOME=/opt/tensorrt
+ENV PATH=${TRT_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${TRT_HOME}/lib:${LD_LIBRARY_PATH}
 
 # ========== Basic Python libraries ==========
 RUN pip install --no-cache-dir \
