@@ -1,0 +1,26 @@
+# PyTorch (install from cu128 index first):
+# pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+
+numpy
+scipy
+pyyaml
+tqdm
+tensorboard
+matplotlib
+opencv-python
+opencv-contrib-python
+pillow
+pandas
+scikit-learn
+scikit-image
+einops
+addict
+yapf
+flake8
+black
+ipython
+jupyter
+streamlit
+open3d
+laspy
+spconv-cu120
