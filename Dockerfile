@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libncursesw5 \
     && rm -rf /var/lib/apt/lists/*
 
-# ========== CUDA 12.8.0 (runfile install) ==========
-COPY packet/cuda_12.8.0_570.86.10_linux.run /tmp/cuda.run
+# ========== CUDA 12.8.2 (runfile install) ==========
+COPY packet/cuda_12.8.2_570.211.01_linux.run /tmp/cuda.run
 RUN sh /tmp/cuda.run --silent --toolkit --override --no-opengl-libs \
     && rm /tmp/cuda.run
 
@@ -39,10 +39,10 @@ ENV PATH=/usr/local/cuda-12.8/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:${LD_LIBRARY_PATH}
 ENV CUDA_HOME=/usr/local/cuda-12.8
 
-# ========== cuDNN 9.5.0 (deb repo install) ==========
-COPY packet/cudnn-local-repo-ubuntu2204-9.5.0.26_1.0-1_amd64.deb /tmp/cudnn.deb
+# ========== cuDNN 9.26.1 (deb repo install) ==========
+COPY packet/cudnn-local-repo-ubuntu2204-9.26.1_1.0-1_amd64.deb /tmp/cudnn.deb
 RUN dpkg -i /tmp/cudnn.deb \
-    && cp /var/cudnn-local-repo-ubuntu2204-9.5.0.26/cudnn-*-keyring.gpg /usr/share/keyrings/ \
+    && cp /var/cudnn-local-repo-ubuntu2204-9.26.1/cudnn-*-keyring.gpg /usr/share/keyrings/ \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
     cudnn-cuda-12 \
