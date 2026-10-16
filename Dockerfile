@@ -7,6 +7,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
+# ========== COPY packages first (fail fast if missing) ==========
+COPY packet/cuda_12.8.2_570.211.01_linux.run /tmp/cuda.run
+COPY packet/cudnn-local-repo-ubuntu2204-9.26.1_1.0-1_amd64.deb /tmp/cudnn.deb
+COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar /tmp/tensorrt.tar
+
 # ========== System dependencies ==========
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -31,7 +36,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ========== CUDA 12.8.2 (runfile install) ==========
-COPY packet/cuda_12.8.2_570.211.01_linux.run /tmp/cuda.run
 RUN sh /tmp/cuda.run --silent --toolkit --override --no-opengl-libs \
     && rm /tmp/cuda.run
 
@@ -40,7 +44,6 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:${LD_LIBRARY_PATH}
 ENV CUDA_HOME=/usr/local/cuda-12.8
 
 # ========== cuDNN 9.26.1 (deb repo install) ==========
-COPY packet/cudnn-local-repo-ubuntu2204-9.26.1_1.0-1_amd64.deb /tmp/cudnn.deb
 RUN dpkg -i /tmp/cudnn.deb \
     && cp /var/cudnn-local-repo-ubuntu2204-9.26.1/cudnn-*-keyring.gpg /usr/share/keyrings/ \
     && apt-get update \
@@ -50,7 +53,6 @@ RUN dpkg -i /tmp/cudnn.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # ========== TensorRT 10.9.0.34 (tarball install) ==========
-COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar /tmp/tensorrt.tar
 RUN tar -xf /tmp/tensorrt.tar -C /opt \
     && mv /opt/TensorRT-10.9.0.34 /opt/tensorrt \
     && rm /tmp/tensorrt.tar
