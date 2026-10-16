@@ -1,0 +1,26 @@
+from typing import List
+
+import torch
+from torch import nn
+
+__all__ = ["ConvFuser"]
+
+
+class ConvFuser(nn.Sequential):
+    """Concatenate camera/lidar BEV features and fuse with Conv2d+BN+ReLU.
+
+    Ported verbatim from mmdet3d/models/fusers/conv.py (registry removed).
+    Module indices 0/1/2 == ckpt keys fuser.0.* / fuser.1.*.
+    """
+
+    def __init__(self, in_channels: int, out_channels: int) -> None:
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        super().__init__(
+            nn.Conv2d(sum(in_channels), out_channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(True),
+        )
+
+    def forward(self, inputs: List[torch.Tensor]) -> torch.Tensor:
+        return super().forward(torch.cat(inputs, dim=1))
