@@ -52,7 +52,7 @@ void hard_voxelize_kernel(const torch::TensorAccessor<T, 2> points,
                           const std::vector<float> coors_range,
                           const std::vector<int> grid_size,
                           const int max_points, const int max_voxels,
-                          const int num_point, const int num_features,
+                          const int num_points, const int num_features,
                           const int NDim) {
   // declare a temp coors
   at::Tensor temp_coors = at::zeros(
