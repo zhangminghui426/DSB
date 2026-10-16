@@ -28,6 +28,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
+# ========== ROS2 Humble (Ubuntu 22.04) ==========
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    locales \
+    && locale-gen en_US en_US.UTF-8 \
+    && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg2 \
+    lsb-release \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+    -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
+    | tee /etc/apt/sources.list.d/ros2.list > /dev/null \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-ros-base \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    python3-vcstool \
+    && rm -rf /var/lib/apt/lists/* \
+    && rosdep init || echo "rosdep already initialized" \
+    && rosdep update --rosdistro humble
+
+ENV ROS_DISTRO=humble
+ENV ROS_ROOT=/opt/ros/humble
+ENV LD_LIBRARY_PATH=/opt/ros/humble/lib:${LD_LIBRARY_PATH}
+ENV PATH=/opt/ros/humble/bin:${PATH}
+ENV AMENT_PREFIX_PATH=/opt/ros/humble
+ENV CMAKE_PREFIX_PATH=/opt/ros/humble
+
 # ========== Miniconda3 ==========
 ENV CONDA_DIR=/opt/conda
 ENV PATH=${CONDA_DIR}/bin:${PATH}
