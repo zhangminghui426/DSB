@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/tensorrt:25.02-py3
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
 
 LABEL maintainer="zhangminghui"
 LABEL description="DSB: bevfusion + flashocc + fast_calib development environment"
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     libssl-dev \
     libffi-dev \
-    libgl1 \
+    libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -69,6 +69,17 @@ ENV LD_LIBRARY_PATH=/opt/ros/humble/lib:${LD_LIBRARY_PATH}
 ENV PATH=/opt/ros/humble/bin:${PATH}
 ENV AMENT_PREFIX_PATH=/opt/ros/humble
 ENV CMAKE_PREFIX_PATH=/opt/ros/humble
+
+# ========== TensorRT 10.9 (tarball install) ==========
+COPY TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz /tmp/tensorrt.tar.gz
+RUN tar -xzf /tmp/tensorrt.tar.gz -C /opt \
+    && mv /opt/TensorRT-10.9.0.34 /opt/tensorrt \
+    && rm /tmp/tensorrt.tar.gz \
+    && pip install --no-cache-dir /opt/tensorrt/python/tensorrt-10.9.0-cp310-none-linux_x86_64.whl
+
+ENV TRT_HOME=/opt/tensorrt
+ENV PATH=${TRT_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${TRT_HOME}/lib:${LD_LIBRARY_PATH}
 
 # ========== Miniconda3 ==========
 ENV CONDA_DIR=/opt/conda
