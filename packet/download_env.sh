@@ -1,6 +1,9 @@
 #!/bin/bash
-# Download all installation packages for DSB Docker build
+# Download installation packages for DSB Docker build
 # Run this script before `docker build`
+#
+# Note: TensorRT requires manual download (NVIDIA developer account login).
+# See instructions at the end of this script.
 
 set -e
 
@@ -15,22 +18,22 @@ echo "=== Downloading cuDNN 9.5.0 (Ubuntu 22.04 deb repo) ==="
 wget -c https://developer.download.nvidia.com/compute/cudnn/9.5.0/local_installers/cudnn-local-repo-ubuntu2204-9.5.0.26_1.0-1_amd64.deb \
     -O cudnn-local-repo-ubuntu2204-9.5.0.26_1.0-1_amd64.deb
 
-echo "=== Downloading TensorRT 10.9.0.34 (tarball) ==="
-# Note: requires NVIDIA developer account login
-# Download manually from:
-# https://developer.nvidia.com/tensorrt/download/10x
-# Save as: TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz
-wget -c https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.9.1/tars/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz \
-    -O TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz || {
-    echo ""
-    echo "WARNING: TensorRT download failed (may require login)."
-    echo "Please download manually from:"
-    echo "  https://developer.nvidia.com/tensorrt/download/10x"
-    echo "And save as: TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz"
-    echo "in the packet/ directory."
-}
-
 echo ""
-echo "=== Download complete ==="
+echo "=========================================="
+echo "=== MANUAL DOWNLOAD REQUIRED: TensorRT ==="
+echo "=========================================="
+echo ""
+echo "TensorRT requires NVIDIA developer account login."
+echo "Please download manually:"
+echo ""
+echo "  URL:  https://developer.nvidia.com/tensorrt/download/10x"
+echo "  Step:  1. Login with NVIDIA developer account"
+echo "         2. Select TensorRT 10.9 GA"
+echo "         3. Download Linux x86_64 / CUDA 12.x tarball"
+echo ""
+echo "  Save as: $(pwd)/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz"
+echo ""
+
+echo "=== Download complete (CUDA + cuDNN) ==="
 echo "Packages in $(pwd):"
-ls -lh *.run *.deb *.tar.gz 2>/dev/null || echo "(some packages missing)"
+ls -lh *.run *.deb *.tar.gz 2>/dev/null || echo "(TensorRT tarball missing - download manually)"
