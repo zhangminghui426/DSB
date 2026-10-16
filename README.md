@@ -41,6 +41,8 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 │       └── tools/          # 可视化工具
 ├── Dockerfile              # Docker 构建文件
 ├── requirements.txt        # Python 依赖
+├── packet/                 #  Docker 安装包（CUDA/cuDNN/TensorRT）
+│   └── download_env.sh     # 下载安装包脚本
 ├── docs/                   # 文档
 └── README.md
 ```
@@ -50,10 +52,17 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 ### 方式一：Docker（推荐）
 
 ```bash
-# 构建镜像
+# 1. 下载安装包（CUDA + cuDNN 自动下载，TensorRT 需手动下载）
+cd packet/
+bash download_env.sh
+# TensorRT 需手动从 https://developer.nvidia.com/tensorrt/download/10x 下载
+# 保存为 packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz
+cd ..
+
+# 2. 构建镜像
 docker build -t dsb:latest .
 
-# 启动容器（挂载代码目录）
+# 3. 启动容器（挂载代码目录）
 docker run --gpus all -it --rm \
     -v ~/wk_robot/aigorithm/DSB:/workspace \
     dsb:latest
@@ -64,8 +73,8 @@ python setup.py build_ext --inplace
 ```
 
 Docker 环境配置：
-- Ubuntu 22.04 + CUDA 12.8 + TensorRT 10.8
-- ROS2 Humble（ros-base + colcon + rosdep + vcstool）
+- Ubuntu 22.04 + CUDA 12.8 + cuDNN 9.5 + TensorRT 10.9
+- ROS2 Humble（ros-base + mcap + cv_bridge + pcl_ros + colcon）
 - Miniconda3，DSB 环境 Python 3.10
 - PyTorch 2.8.0 + cu12.8
 
