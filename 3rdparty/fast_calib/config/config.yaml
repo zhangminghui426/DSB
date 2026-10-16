@@ -1,0 +1,96 @@
+# ==================== 标定板几何参数 单位 m ====================
+# 板子 1400mm x 1000mm, 中心为原点
+calib_board:
+  hole_centers_board:
+    [
+      [-0.25,  0.20, 0.0],
+      [ 0.25,  0.20, 0.0],
+      [-0.25, -0.20, 0.0],
+      [ 0.25, -0.20, 0.0]
+    ]
+  marker_size: 0.20
+  hole_radius: 0.12
+  marker_centers_board:
+    1: [-0.55,  0.35, 0.0]
+    2: [ 0.55,  0.35, 0.0]
+    3: [-0.55, -0.35, 0.0]
+    4: [ 0.55, -0.35, 0.0]
+
+# 雷达孔可视化调色板 (R,G,B) 0~1
+hole_palette:
+  [
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0],
+    [1.0, 1.0, 0.0]
+  ]
+
+# PointCloud2 datatype枚举 -> numpy dtype字符串
+point_field_datatype_to_np:
+  1: "i1"
+  2: "u2"
+  3: "i2"
+  4: "u2"
+  5: "i4"
+  6: "u4"
+  7: "f4"
+  8: "f8"
+
+# CompressedVideo编码格式映射
+format_map:
+  h264: "h264"
+  avc1: "h264"
+  x264: "h264"
+  h265: "hevc"
+  hevc: "hevc"
+  hvc1: "hevc"
+  av1: "av1"
+  vp8: "vp8"
+  vp9: "vp9"
+
+# ==================== 鱼眼相机 Kannala‑Brandt 内外参 ====================
+# H190XA-I07071634.txt
+camera_intrinsic:
+  type: fisheye
+  K:
+    [
+      [514.2359213414, 0.0, 960.5759797183],
+      [0.0, 513.9840893642, 768.7302989533],
+      [0.0, 0.0, 1.0]
+    ]
+  dist: [0.0964387318, -0.0127636822, -0.0075649092, 0.0017342664]
+
+# ==================== 标定算法参数 ====================
+calib_algo:
+  max_dt_ns: 100000000
+  plane_tol: 0.01
+  plane_iters: 300
+  board_vertical_prior: true
+  min_sample: 6
+  n_calib_frames: 50
+  calib_seed: 0
+  save_intermediate: true
+  save_pointcloud: false
+  save_roi_pointcloud: false
+  pcl_fmt: "pcd"
+
+# 默认手动ROI ((xmin,xmax), (ymin,ymax), (zmin,zmax))，检测器失效fallback
+default_pc_roi_lim:
+  - [0.5, 2.5]
+  - [-1.0, 2.0]
+  - [-1.5, 0.5]
+
+# ==================== SECOND 标定板检测器 ====================
+second_detector:
+  enabled: true
+  model_path: "/tmp/best_model.pth"
+  score_thr: 0.3
+
+# ==================== 数据路径与topic ====================
+data_config:
+  mcap_file: "data/20261012-162756_0.mcap"
+  cam_topics:
+    cam_gmsl_2: "/camera/gmsl_2/image/encoded"
+  lidar_topic: "/lidar/rs_h32f70_2/points"
+
+output_dir: "./outputs"
