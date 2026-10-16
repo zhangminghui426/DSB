@@ -1,15 +1,6 @@
-#!/bin/bash
-# Environment setup for DSB (bevfusion_flashocc)
-
-# Add project root to PYTHONPATH
-export PYTHONPATH="$(cd $(dirname $0)/.. && pwd):$PYTHONPATH"
-
-# Default dataset path
-export DATA_ROOT="${DATA_ROOT:-/data/nuscenes}"
-
-# CUDA settings
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
-
-echo "DSB environment configured."
-echo "  PYTHONPATH=$PYTHONPATH"
-echo "  DATA_ROOT=$DATA_ROOT"
+# Sourced by the .sh wrappers (not executed). All values overridable via env.
+PY="${PY:-/home/wika/miniconda3/envs/bevfusion/bin/python}"
+CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-12.8}"
+export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-12.0}"
+export PATH="$CUDA_HOME/bin:$PATH"
+TORCHRUN="${TORCHRUN:-$(dirname "$PY")/torchrun}"
