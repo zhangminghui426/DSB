@@ -10,13 +10,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "=== Downloading CUDA 12.8.0 (runfile) ==="
-wget -c https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_570.86.10_linux.run \
-    -O cuda_12.8.0_570.86.10_linux.run
+echo "=== Downloading CUDA 12.8.2 (runfile) ==="
+wget -c https://developer.download.nvidia.com/compute/cuda/12.8.2/local_installers/cuda_12.8.2_570.211.01_linux.run \
+    -O cuda_12.8.2_570.211.01_linux.run
 
-echo "=== Downloading cuDNN 9.5.0 (Ubuntu 22.04 deb repo) ==="
-wget -c https://developer.download.nvidia.com/compute/cudnn/9.5.0/local_installers/cudnn-local-repo-ubuntu2204-9.5.0.26_1.0-1_amd64.deb \
-    -O cudnn-local-repo-ubuntu2204-9.5.0.26_1.0-1_amd64.deb
+echo "=== Downloading cuDNN 9.26.1 (Ubuntu 22.04 deb repo) ==="
+wget -c https://developer.download.nvidia.com/compute/cudnn/9.26.1/local_installers/cudnn-local-repo-ubuntu2204-9.26.1_1.0-1_amd64.deb \
+    -O cudnn-local-repo-ubuntu2204-9.26.1_1.0-1_amd64.deb
 
 echo ""
 echo "=========================================="
