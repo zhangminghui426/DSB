@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
+FROM ubuntu:22.04
 
 LABEL maintainer="zhangminghui"
 LABEL description="DSB: bevfusion + flashocc + fast_calib development environment"
@@ -26,7 +26,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libboost-all-dev \
     pkg-config \
     ninja-build \
+    libncurses5 \
+    libncursesw5 \
     && rm -rf /var/lib/apt/lists/*
+
+# ========== CUDA 12.8.0 (runfile install) ==========
+COPY packet/cuda_12.8.0_570.86.10_linux.run /tmp/cuda.run
+RUN sh /tmp/cuda.run --silent --toolkit --override --no-opengl-libs \
+    && rm /tmp/cuda.run
+
+ENV PATH=/usr/local/cuda-12.8/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:${LD_LIBRARY_PATH}
+ENV CUDA_HOME=/usr/local/cuda-12.8
+
+# ========== cuDNN 9.5.0 (deb repo install) ==========
+COPY packet/cudnn-local-repo-ubuntu2204-9.5.0.26_1.0-1_amd64.deb /tmp/cudnn.deb
+RUN dpkg -i /tmp/cudnn.deb \
+    && cp /var/cudnn-local-repo-ubuntu2204-9.5.0.26/cudnn-*-keyring.gpg /usr/share/keyrings/ \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    cudnn-cuda-12 \
+    && rm /tmp/cudnn.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+# ========== TensorRT 10.9.0.34 (tarball install) ==========
+COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz /tmp/tensorrt.tar.gz
+RUN tar -xzf /tmp/tensorrt.tar.gz -C /opt \
+    && mv /opt/TensorRT-10.9.0.34 /opt/tensorrt \
+    && rm /tmp/tensorrt.tar.gz
+
+ENV TRT_HOME=/opt/tensorrt
+ENV PATH=${TRT_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${TRT_HOME}/lib:${LD_LIBRARY_PATH}
 
 # ========== ROS2 Humble (Ubuntu 22.04) ==========
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -39,7 +70,6 @@ ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
     gnupg2 \
     lsb-release \
     && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
@@ -70,17 +100,6 @@ ENV PATH=/opt/ros/humble/bin:${PATH}
 ENV AMENT_PREFIX_PATH=/opt/ros/humble
 ENV CMAKE_PREFIX_PATH=/opt/ros/humble
 
-# ========== TensorRT 10.9 (tarball install) ==========
-COPY TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz /tmp/tensorrt.tar.gz
-RUN tar -xzf /tmp/tensorrt.tar.gz -C /opt \
-    && mv /opt/TensorRT-10.9.0.34 /opt/tensorrt \
-    && rm /tmp/tensorrt.tar.gz \
-    && pip install --no-cache-dir /opt/tensorrt/python/tensorrt-10.9.0-cp310-none-linux_x86_64.whl
-
-ENV TRT_HOME=/opt/tensorrt
-ENV PATH=${TRT_HOME}/bin:${PATH}
-ENV LD_LIBRARY_PATH=${TRT_HOME}/lib:${LD_LIBRARY_PATH}
-
 # ========== Miniconda3 ==========
 ENV CONDA_DIR=/opt/conda
 ENV PATH=${CONDA_DIR}/bin:${PATH}
@@ -97,6 +116,9 @@ RUN conda create -n DSB python=3.10 -y \
 ENV CONDA_DEFAULT_ENV=DSB
 ENV CONDA_PREFIX=${CONDA_DIR}/envs/DSB
 ENV PATH=${CONDA_PREFIX}/bin:${PATH}
+
+# ========== TensorRT Python wheel (install into DSB env) ==========
+RUN pip install --no-cache-dir /opt/tensorrt/python/tensorrt-10.9.0-cp310-none-linux_x86_64.whl
 
 # ========== PyTorch 2.8 + CUDA 12.8 ==========
 RUN pip install --no-cache-dir \
