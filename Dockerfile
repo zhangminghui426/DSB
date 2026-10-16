@@ -50,10 +50,10 @@ RUN dpkg -i /tmp/cudnn.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # ========== TensorRT 10.9.0.34 (tarball install) ==========
-COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz /tmp/tensorrt.tar.gz
-RUN tar -xzf /tmp/tensorrt.tar.gz -C /opt \
+COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar /tmp/tensorrt.tar
+RUN tar -xf /tmp/tensorrt.tar -C /opt \
     && mv /opt/TensorRT-10.9.0.34 /opt/tensorrt \
-    && rm /tmp/tensorrt.tar.gz
+    && rm /tmp/tensorrt.tar
 
 ENV TRT_HOME=/opt/tensorrt
 ENV PATH=${TRT_HOME}/bin:${PATH}
