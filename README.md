@@ -39,34 +39,68 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 │       ├── scripts/        # 标定主程序、检测器接口
 │       ├── config/         # 标定配置
 │       └── tools/          # 可视化工具
+├── Dockerfile              # Docker 构建文件
+├── requirements.txt        # Python 依赖
 ├── docs/                   # 文档
 └── README.md
 ```
 
 ## 快速开始
 
-### 1. 安装依赖
+### 方式一：Docker（推荐）
 
 ```bash
-conda activate bevfusion   # python 3.10, torch 2.8.0+cu128
+# 构建镜像
+docker build -t dsb:latest .
+
+# 启动容器（挂载代码目录）
+docker run --gpus all -it --rm \
+    -v ~/wk_robot/aigorithm/DSB:/workspace \
+    dsb:latest
+
+# 容器内已自动激活 DSB conda 环境，直接编译算子
 cd 3rdparty/deepleraing
-python setup.py build_ext --inplace   # 编译 CUDA 算子
+python setup.py build_ext --inplace
 ```
 
-### 2. 启动 Streamlit UI
+Docker 环境配置：
+- Ubuntu 22.04 + CUDA 12.8 + TensorRT 10.8
+- Miniconda3，DSB 环境 Python 3.10
+- PyTorch 2.8.0 + cu12.8
+
+### 方式二：本地 Conda 环境
+
+```bash
+# 创建 conda 环境
+conda create -n DSB python=3.10 -y
+conda activate DSB
+
+# 安装 PyTorch（cu128）
+pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
+    --index-url https://download.pytorch.org/whl/cu128
+
+# 安装其余依赖
+pip install -r requirements.txt
+
+# 编译 CUDA 算子
+cd 3rdparty/deepleraing
+python setup.py build_ext --inplace
+```
+
+### 启动 Streamlit UI
 
 ```bash
 streamlit run app/app.py
 ```
 
-### 3. 训练标定板检测器
+### 训练标定板检测器
 
 ```bash
 cd 3rdparty/deepleraing/models/calib_board_detector
 python train.py
 ```
 
-### 4. 运行标定
+### 运行标定
 
 ```bash
 cd 3rdparty/fast_calib
