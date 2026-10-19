@@ -2,7 +2,7 @@
 # usage: launch/infer_trt.sh <det|seg> [checkpoint] [extra args...]
 # Builds (--build, optional --fp16) + runs TRT engines on a val sample.
 # Requires export.sh to have produced outputs/onnx/*.onnx first.
-# ONNX -> engine uses trtexec (see deploy/trt_common.py): set
+# ONNX -> engine uses trtexec (see deploy/builder.py): set
 # TRTEXEC=/path/to/bin/trtexec when the conda env is pip-only (no trtexec).
 set -e
 cd "$(dirname "$0")/.."
@@ -15,4 +15,4 @@ case "$TASK" in
 esac
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then CKPT="$1"; shift; fi
 [ -f "$CKPT" ] || { echo "checkpoint missing: $CKPT" >&2; exit 2; }
-"$PY" deploy/trt_infer.py "$CFG" "$CKPT" --task "$TASK" "$@"
+"$PY" deploy/inferencer.py "$CFG" "$CKPT" --task "$TASK" "$@"

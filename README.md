@@ -31,7 +31,7 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 │   │   │   └── calib_board_detector/ # 标定板检测器（SECOND）
 │   │   ├── datasets/       # 数据集和数据处理
 │   │   ├── scripts/        # 训练、测试、导出、可视化脚本（仅 .py）
-│   │   ├── deploy/         # 导出/TRT 推理运行时组件（trt_common/trt_build/trt_infer/bev_pool/lidar/preprocess）
+│   │   ├── deploy/         # 导出/构建/推理包（exporter/builder/runtime/inferencer/config/graphs + bev_pool/lidar/preprocess）
 │   │   ├── launch/         # shell 启动脚本（train/eval/export/infer_trt/perf_trt/visualize）
 │   │   ├── configs/        # 配置文件
 │   │   ├── ops/            # 自定义 CUDA 算子
@@ -140,17 +140,17 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 cd 3rdparty/deepleraing
 
 # 1. 导出 ONNX（--verify 用 onnxruntime 逐图校验，需 pip install onnx onnxruntime）
-python scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task det --verify
+python deploy/exporter.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task det --verify
 
 # 2. 构建 TRT engine（缓存到 outputs/trt/；ONNX->engine 只走 trtexec CLI：
 #    $TRTEXEC 或 PATH；pip-only tensorrt 无 trtexec，需
 #    TRTEXEC=/path/to/TensorRT-10.9.../bin/trtexec。TRT >= 10.12 强类型下
-#    FP32 ONNX 出 FP32 engine，--fp16 需配合 --autocast-fp16，见 deploy/trt_build.py）
-python deploy/trt_infer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+#    FP32 ONNX 出 FP32 engine，--fp16 需配合 --autocast-fp16，见 deploy/builder.py）
+python deploy/inferencer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --engine_dir outputs/trt --build --fp16 --verify
 
 # 3. 保存解码结果
-python deploy/trt_infer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+python deploy/inferencer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```
 
@@ -207,10 +207,10 @@ python -m http.server 8765 --bind 127.0.0.1 --directory outputs/perf/report
 TRT 强类型说明（TRT >= 10.12 / 11.x）：精度由 ONNX 图表达（Cast/QDQ），
 `BuilderFlag.FP16/INT8` 已移除；FP32 ONNX 构建 FP32 engine。需要混合 FP16
 时先用 ModelOpt AutoCast（`pip install nvidia-modelopt`），或在
-`trt_build.py`/`trt_infer.py` 加 `--autocast-fp16`。TRT < 10.12（docker 目标
+`builder.py`/`inferencer.py` 加 `--autocast-fp16`。TRT < 10.12（docker 目标
 10.9.0.34）自动回退显式 batch 弱类型，`--fp16` 照常生效（版本在构建时探测）。
 ONNX→engine 只走 trtexec CLI（`$TRTEXEC` 或 PATH；缺失时构建直接报错，
-需设置 TRTEXEC 指向 tar 包 bin/trtexec，见 `deploy/trt_common.py`）。
+需设置 TRTEXEC 指向 tar 包 bin/trtexec，见 `deploy/builder.py`）。
 
 `launch/env.sh` 可覆盖：`PY`（conda python）、`CUDA_HOME`、`NGPU`（多卡
 torchrun）等环境变量。
