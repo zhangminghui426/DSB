@@ -11,7 +11,6 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 COPY packet/cuda_12.8.2_570.211.01_linux.run /tmp/cuda.run
 COPY packet/cudnn-local-repo-ubuntu2204-9.26.1_1.0-1_amd64.deb /tmp/cudnn.deb
 COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.tar /tmp/tensorrt.tar
-COPY packet/fish_install.yaml /tmp/fish_install.yaml
 
 # ========== System dependencies ==========
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -35,7 +34,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     libncurses5 \
     libncursesw5 \
+    locales \
+    && locale-gen en_US en_US.UTF-8 \
+    && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 # ========== CUDA 12.8.2 (runfile install) ==========
 RUN sh /tmp/cuda.run --silent --toolkit --override --no-opengl-libs \
@@ -62,48 +67,6 @@ RUN tar -xf /tmp/tensorrt.tar -C /opt \
 ENV TRT_HOME=/opt/tensorrt
 ENV PATH=${TRT_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${TRT_HOME}/lib:${LD_LIBRARY_PATH}
-
-# ========== ROS2 Humble (fishros 一键安装, 国内源) ==========
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    python3 \
-    python3-yaml \
-    python3-distro \
-    locales \
-    && locale-gen en_US en_US.UTF-8 \
-    && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV LANG=en_US.UTF-8
-ENV LC_ALL=en_US.UTF-8
-
-# fishros 一键安装 ROS2 humble
-# fish_install.yaml 提供自动应答（按交互顺序 9 项），避免交互式输入
-RUN wget -q http://fishros.com/install -O /tmp/fishros \
-    && FISH_INSTALL_CONFIG=/tmp/fish_install.yaml bash /tmp/fishros \
-    && rm -f /tmp/fishros /tmp/fish_install.yaml
-
-# 补充安装 mcap/bag/cv_bridge/pcl 等工具包
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ros-humble-ros2bag \
-    ros-humble-rosbag2 \
-    ros-humble-rosbag2-storage-mcap \
-    ros-humble-rosbag2-transport \
-    ros-humble-image-tools \
-    ros-humble-cv-bridge \
-    ros-humble-pcl-conversions \
-    ros-humble-pcl-ros \
-    python3-colcon-common-extensions \
-    python3-rosdep \
-    python3-vcstool \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV ROS_DISTRO=humble
-ENV ROS_ROOT=/opt/ros/humble
-ENV LD_LIBRARY_PATH=/opt/ros/humble/lib:${LD_LIBRARY_PATH}
-ENV PATH=/opt/ros/humble/bin:${PATH}
-ENV AMENT_PREFIX_PATH=/opt/ros/humble
-ENV CMAKE_PREFIX_PATH=/opt/ros/humble
 
 # ========== Miniconda3 ==========
 ENV CONDA_DIR=/opt/conda
