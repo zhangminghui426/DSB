@@ -4,10 +4,9 @@ Usage:
   python deploy/trt_build.py --task det --onnx_dir outputs/onnx \
       --engine_dir outputs/trt [--fp16] [--autocast-fp16]
 
-ONNX -> engine conversion uses the trtexec CLI by default (lookup: $TRTEXEC
-env, then PATH — same convention as launch/perf_trt.sh). When no trtexec
-binary exists (pip-only tensorrt wheels) it falls back to the Python builder
-API.
+ONNX -> engine conversion uses the trtexec CLI only (lookup: $TRTEXEC env,
+then PATH — same convention as launch/perf_trt.sh). A missing trtexec is a
+hard error: set TRTEXEC=/path/to/bin/trtexec (e.g. a TensorRT tar package).
 
 Notes:
   - Strong typing (TRT >= 10.12 / 11.x): precision comes from the ONNX; an

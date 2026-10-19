@@ -1,16 +1,17 @@
 """TensorRT build/runtime helpers shared by deploy/trt_build.py and
 deploy/trt_infer.py.
 
+ONNX -> engine conversion runs the trtexec CLI only (no Python builder API):
+  trtexec --onnx=<onnx> --saveEngine=<engine> [--fp16]
+
 Strong-typing migration (NVIDIA trt-strong-typing-migration):
-  - TRT >= 10.12 (incl. 11.x): networks are created strongly typed
-    (STRONGLY_TYPED flag; accepted-but-ignored on 11.x) and precision-hint
-    flags (BuilderFlag.FP16/INT8) are REMOVED — precision must live in the
-    ONNX graph (explicit Cast / QDQ nodes). An FP32 ONNX yields an FP32
-    engine; for a mixed-FP16 engine run ModelOpt AutoCast first (or pass
+  - TRT >= 10.12 (incl. 11.x): networks are strongly typed by default;
+    precision-hint flags (BuilderFlag.FP16/INT8) are REMOVED — precision must
+    live in the ONNX graph (explicit Cast / QDQ nodes). An FP32 ONNX yields an
+    FP32 engine; for a mixed-FP16 engine run ModelOpt AutoCast first (or pass
     --autocast-fp16 to deploy/trt_build.py / deploy/trt_infer.py).
-  - TRT < 10.12 (e.g. docker target 10.9.0.34): strong typing is unavailable,
-    so fall back to explicit-batch weak typing where BuilderFlag.FP16 still
-    works. Version is probed at build time; no source edits needed per env.
+  - TRT < 10.12 (e.g. docker target 10.9.0.34): weak typing; trtexec --fp16
+    still applies FP16.
 """
 
 import os
@@ -49,22 +50,6 @@ def graph_io(task):
         "fuser": (["cam_bev", "lidar_bev"], ["decoder_feat"]),
         "head.map": (["decoder_feat"], ["masks"]),
     }
-
-
-def _network_flags(trt):
-    """Return (create_network flags, typing mode 'strong' | 'weak')."""
-    try:
-        major, minor = (int(x) for x in str(trt.__version__).split(".")[:2])
-    except (ValueError, AttributeError):
-        major, minor = 0, 0
-    strong = getattr(trt.NetworkDefinitionCreationFlag, "STRONGLY_TYPED", None)
-    if strong is not None and (major, minor) >= (10, 12):
-        return 1 << int(strong), "strong"
-    # TRT 8-10.11: explicit batch is the opt-in form of weak typing.
-    explicit = getattr(trt.NetworkDefinitionCreationFlag, "EXPLICIT_BATCH", None)
-    if explicit is not None:
-        return 1 << int(explicit), "weak"
-    return 0, "weak"
 
 
 def _autocast_onnx_fp16(onnx_path, out_path):
@@ -159,88 +144,24 @@ def _build_engine_trtexec(exe, onnx_path, engine_path, fp16, autocast_fp16):
     print(f"[trt] built {engine_path} (trtexec, fp16={fp16}, strong={strong})")
 
 
-def _build_engine_python(onnx_path, engine_path, fp16, autocast_fp16, workspace):
-    """Fallback: Python builder API (no trtexec binary, e.g. pip-only wheels)."""
-    import tensorrt as trt
+def build_engine(onnx_path, engine_path, fp16=False, autocast_fp16=False):
+    """ONNX -> TensorRT engine (static shapes) via the trtexec CLI only.
 
-    logger = trt.Logger(trt.Logger.WARNING)
-    builder = trt.Builder(logger)
-    flags, mode = _network_flags(trt)
-    network = builder.create_network(flags)
-    parser = trt.OnnxParser(network, logger)
-
-    src = onnx_path
-    tmp_dir = None
-    if fp16 and mode == "strong":
-        if autocast_fp16:
-            tmp_dir = tempfile.mkdtemp(prefix="trt_autocast_")
-            conv = osp.join(tmp_dir, osp.basename(onnx_path)
-                            .replace(".onnx", ".fp16.onnx"))
-            if _autocast_onnx_fp16(onnx_path, conv):
-                src = conv
-                print(f"[trt] AutoCast FP16 ONNX -> {conv}")
-            else:
-                print("[trt] WARNING: nvidia-modelopt not installed; cannot "
-                      "AutoCast to FP16. `pip install nvidia-modelopt` or drop "
-                      "--fp16 to build FP32 from the FP32 ONNX.")
-        else:
-            print("[trt] strong typing: precision comes from the ONNX graph "
-                  "(FP32 ONNX -> FP32 engine). Use --autocast-fp16 for a "
-                  "mixed-FP16 engine (requires nvidia-modelopt).")
-
-    with open(src, "rb") as f:
-        if not parser.parse(f.read()):
-            for i in range(parser.num_errors):
-                print(f"[trt] onnx error {i}: {parser.get_error(i)}")
-            raise RuntimeError(f"ONNX parse failed: {src}")
-
-    config = builder.create_builder_config()
-    config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace)
-    if fp16 and mode == "weak":
-        # Weak typing only: probe both spellings; if absent, FP32 fallback.
-        flag = next(
-            (getattr(trt.BuilderFlag, n, None) for n in ("FP16", "HALF")
-             if getattr(trt.BuilderFlag, n, None) is not None),
-            None,
-        )
-        if flag is not None:
-            config.set_flag(flag)
-        else:
-            print(f"[trt] WARNING: BuilderFlag FP16/HALF unavailable in "
-                  f"tensorrt {trt.__version__}; building FP32 engine")
-
-    serialized = builder.build_serialized_network(network, config)
-    assert serialized is not None, f"engine build failed: {onnx_path}"
-    os.makedirs(osp.dirname(engine_path), exist_ok=True)
-    with open(engine_path, "wb") as f:
-        f.write(serialized)
-    print(f"[trt] built {engine_path} (python builder, fp16={fp16}, "
-          f"typing={mode})")
-    if tmp_dir:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-def build_engine(onnx_path, engine_path, fp16=False, autocast_fp16=False,
-                 workspace=2 << 30):
-    """ONNX -> TensorRT engine (static shapes).
-
-    Preferred path: the trtexec CLI (consistent with launch/perf_trt.sh),
-    resolved from $TRTEXEC or PATH. Falls back to the Python builder API
-    when no trtexec binary exists (pip-only tensorrt wheels). fp16 semantics
-    by trtexec generation:
+    trtexec is resolved from $TRTEXEC or PATH; a missing binary is a hard
+    error (set TRTEXEC=/path/to/bin/trtexec, e.g. a TensorRT tar package).
+    fp16 semantics by trtexec generation:
       - TRT >= 10.12 strong typing: --fp16 is removed; precision comes from
         the ONNX (--autocast-fp16 ModelOpt-AutoCasts first, needs
         nvidia-modelopt; otherwise FP32 ONNX -> FP32 engine).
       - TRT < 10.12 (10.9 docker target): --fp16 applies weak-typing FP16.
     """
     exe = _find_trtexec()
-    if exe is not None:
-        return _build_engine_trtexec(exe, onnx_path, engine_path, fp16,
-                                     autocast_fp16)
-    print("[trt] trtexec not found (set TRTEXEC=/path/to/bin/trtexec to use "
-          "the CLI); falling back to the Python builder API")
-    return _build_engine_python(onnx_path, engine_path, fp16, autocast_fp16,
-                                workspace)
+    if exe is None:
+        raise RuntimeError(
+            "trtexec not found (set TRTEXEC=/path/to/bin/trtexec, e.g. the "
+            "TensorRT tar package's bin/trtexec)"
+        )
+    _build_engine_trtexec(exe, onnx_path, engine_path, fp16, autocast_fp16)
 
 
 class TRTEngine:
