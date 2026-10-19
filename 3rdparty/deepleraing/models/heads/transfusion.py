@@ -259,9 +259,12 @@ class TransFusionHead(nn.Module):
         heatmap = heatmap.view(batch_size, heatmap.shape[1], -1)
 
         # top #num_proposals among all classes
-        top_proposals = heatmap.view(batch_size, -1).argsort(dim=-1, descending=True)[
-            ..., : self.num_proposals
-        ]
+        # NOTE: use topk, not argsort+slice: argsort traces to a full-size
+        # TopK (K = num_bev = 32400) + Slice in ONNX, which TensorRT rejects
+        # (TopK K is capped at 3840). topk keeps K = num_proposals in the graph.
+        _, top_proposals = heatmap.view(batch_size, -1).topk(
+            self.num_proposals, dim=-1, sorted=True
+        )
         top_proposals_class = top_proposals // heatmap.shape[-1]
         top_proposals_index = top_proposals % heatmap.shape[-1]
         query_feat = lidar_feat_flatten.gather(
