@@ -96,6 +96,32 @@ cd 3rdparty/deepleraing
 python setup.py build_ext --inplace
 ```
 
+### 训练 BEV 感知模型（BEVFusion 检测）
+
+```bash
+cd 3rdparty/deepleraing
+
+# 1. 准备数据：软链接 nuScenes 数据目录（配置中 dataset_root="data/nuscenes/"，
+#    需要 nuscenes_infos_train.pkl / nuscenes_infos_val.pkl / nuscenes_dbinfos_train.pkl）
+ln -s /path/to/nuscenes data/nuscenes
+
+# 2. 编译 CUDA 算子（bev_pool_v2 / voxel / iou3d）
+python setup.py build_ext --inplace
+
+# 3. 训练（单卡；多卡用 torchrun --nproc_per_node=N，官方 recipe batch 4/卡）
+python scripts/train.py configs/det_convfuser.py --load_from ckpts/bevfusion-det-bf.pth
+
+# 4. 评估
+python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eval bbox
+```
+
+常用训练参数：
+- `--batch_size N`：覆盖 `data.samples_per_gpu`（单卡 8GB 默认 2）
+- `--epochs N`：覆盖 `max_epochs`
+- `--no_amp`：关闭混合精度
+- `--no_eval`：跳过训练中评估
+- `--options key=value`：点号式配置覆盖，如 `--options optimizer.lr=2e-4`
+
 ### 启动 Streamlit UI
 
 ```bash
