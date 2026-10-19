@@ -74,7 +74,6 @@ python setup.py build_ext --inplace
 
 Docker 环境配置：
 - Ubuntu 22.04 + CUDA 12.8.2 + cuDNN 9.26.1 + TensorRT 10.9.0.34
-- ROS2 Humble（ros-base + mcap + cv_bridge + pcl_ros + colcon）
 - Miniconda3，DSB 环境 Python 3.10
 - PyTorch 2.8.0 + cu12.8
 
