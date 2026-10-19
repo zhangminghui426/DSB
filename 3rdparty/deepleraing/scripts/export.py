@@ -209,7 +209,8 @@ def sample_inputs(cfg, model, task):
     img = batch["img"]
 
     lidar_enc = LidarBranchEncoder(model)
-    lidar_bev = lidar_enc([batch["points"][0].cpu()], use_fp16=False)
+    # keep points on the model device so fuser can cat cam/lidar BEVs
+    lidar_bev = lidar_enc([batch["points"][0]], use_fp16=False)
 
     with torch.no_grad():
         feats = CamBackbone(model)(img)
