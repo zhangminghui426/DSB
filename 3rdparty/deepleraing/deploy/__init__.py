@@ -1,14 +1,14 @@
 """Deploy package: split-module ONNX export -> trtexec engine build -> TRT infer.
 
 Entry points (each has a CLI):
-  python deploy/exporter.py   CONFIG CKPT --task det [--verify]   # ONNX export
-  python deploy/builder.py    --task det [--fp16]                 # engine build
-  python deploy/inferencer.py CONFIG CKPT --task det [--build]    # TRT inference
+  python deploy/export.py    CONFIG CKPT --task det [--verify]   # ONNX export + engine build
+  python deploy/builder.py   --task det [--fp16]                 # engine build only
+  python deploy/inferencer.py CONFIG CKPT --task det [--build]   # TRT inference
 
 Modules:
   config       DeployConfig: shared paths / precision / behavior knobs
   graphs       GRAPH_IO + DET_HEAD_KEYS: single source of tensor names
-  exporter     OnnxExporter: module-split ONNX export + onnxruntime verify
+  export       OnnxExporter: module-split ONNX export + trtexec engine build
   builder      EngineBuilder: ONNX -> engine via the trtexec CLI only
   runtime      TrtEngine + load_engines: engine load / execute
   inferencer   DetInferencer: full TRT pipeline + decode + parity verify

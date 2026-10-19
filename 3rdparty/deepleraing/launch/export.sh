@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # usage: launch/export.sh <det|seg> [checkpoint] [extra args...]
-# Exports the 4 module graphs to ONNX (+ optional --verify parity check).
+# Exports the 4 module graphs to ONNX, then builds the TRT engines
+# (trtexec CLI) in one step. Pass --onnx-only for ONNX only.
 set -e
 cd "$(dirname "$0")/.."
 source launch/env.sh
@@ -12,4 +13,4 @@ case "$TASK" in
 esac
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then CKPT="$1"; shift; fi
 [ -f "$CKPT" ] || { echo "checkpoint missing: $CKPT" >&2; exit 2; }
-"$PY" deploy/exporter.py "$CFG" "$CKPT" --task "$TASK" "$@"
+"$PY" deploy/export.py "$CFG" "$CKPT" --task "$TASK" "$@"

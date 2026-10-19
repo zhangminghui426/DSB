@@ -1,7 +1,7 @@
 """Graph definitions for the module-split ONNX export / TRT runtime.
 
 Single source of truth for the det / seg graphs: input/output tensor names
-are shared by the ONNX exporter (deploy.exporter), the engine builder
+are shared by the ONNX exporter (deploy.export), the engine builder
 (deploy.builder) and the TRT runtime (deploy.runtime / deploy.inferencer).
 """
 

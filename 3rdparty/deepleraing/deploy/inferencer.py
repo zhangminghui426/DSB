@@ -1,6 +1,6 @@
 """TensorRT inference for the CUDA-BEVFusion-style module split.
 
-The exported ONNX graphs (deploy.exporter) run as TRT engines
+The exported ONNX graphs (deploy.export) run as TRT engines
 (deploy.runtime); everything with a custom CUDA op stays on the torch/CUDA
 side: camera geometry + bev_pool + vtransform downsample (deploy.bev_pool_torch),
 lidar voxelization + SparseEncoder (deploy.lidar_branch), box decode + NMS
