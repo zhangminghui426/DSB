@@ -100,7 +100,9 @@ class FuserDecoder(nn.Module):
 
 
 class HeadBbox(nn.Module):
-    """TransFusionHead raw pred tensors (decode stays in postprocess)."""
+    """TransFusionHead raw pred tensors + query_labels (decode stays in
+    postprocess). query_labels comes from the in-graph topk and is emitted
+    as float32 so the TRT runtime (float-only buffers) can carry it."""
 
     def __init__(self, model):
         super().__init__()
@@ -110,7 +112,8 @@ class HeadBbox(nn.Module):
     def forward(self, x):
         pd = self.head([x], [{}])
         d = pd[0][0]
-        return tuple(d[k] for k in DET_HEAD_KEYS)
+        return (*(d[k] for k in DET_HEAD_KEYS[:-1]),
+                self.head.query_labels.float())
 
 
 class HeadMap(nn.Module):

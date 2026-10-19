@@ -14,6 +14,10 @@ DET_HEAD_KEYS = [
     "dim",
     "rot",
     "vel",
+    # proposal class ids from the in-graph topk (float32 so the TRT runtime
+    # can carry it; decode casts back to int for one_hot). Not part of the
+    # prediction dicts — decode reads it via preds_dict.get("query_labels").
+    "query_labels",
 ]
 
 # task -> {graph name: ([input names], [output names])}

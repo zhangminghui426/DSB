@@ -681,8 +681,13 @@ class TransFusionHead(nn.Module):
         for layer_id, preds_dict in enumerate(preds_dicts):
             batch_size = preds_dict[0]["heatmap"].shape[0]
             batch_score = preds_dict[0]["heatmap"][..., -self.num_proposals:].sigmoid().float()
+            # TRT path passes query_labels as an engine output (float32);
+            # torch path carries it on self.query_labels (set in forward_single).
+            query_labels = preds_dict[0].get("query_labels")
+            if query_labels is None:
+                query_labels = self.query_labels
             one_hot = F.one_hot(
-                self.query_labels, num_classes=self.num_classes
+                query_labels.long(), num_classes=self.num_classes
             ).permute(0, 2, 1)
             batch_score = batch_score * preds_dict[0]["query_heatmap_score"] * one_hot
 
