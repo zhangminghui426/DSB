@@ -10,7 +10,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # ========== COPY packages first (fail fast if missing) ==========
 COPY packet/cuda_12.8.2_570.211.01_linux.run /tmp/cuda.run
 COPY packet/cudnn-local-repo-ubuntu2204-9.26.1_1.0-1_amd64.deb /tmp/cudnn.deb
-COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar /tmp/tensorrt.tar
+COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.tar /tmp/tensorrt.tar
 
 # ========== System dependencies ==========
 RUN apt-get update && apt-get install -y --no-install-recommends \
