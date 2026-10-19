@@ -44,13 +44,12 @@ ENV PATH=/usr/local/cuda-12.8/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:${LD_LIBRARY_PATH}
 ENV CUDA_HOME=/usr/local/cuda-12.8
 
-# ========== cuDNN 9.26.1 (deb repo install) ==========
+# ========== cuDNN 9.26.1 (deb repo install, official NVIDIA commands) ==========
 RUN dpkg -i /tmp/cudnn.deb \
-    && cp /var/cudnn-local-repo-ubuntu2204-9.26.1/cudnn-local-*-keyring.gpg /etc/apt/trusted.gpg.d/ \
-    && sed -i 's/ signed-by=[^ ]*//' /etc/apt/sources.list.d/cudnn-local-*.list \
+    && cp /var/cudnn-local-repo-ubuntu2204-9.26.1/cudnn-*-keyring.gpg /usr/share/keyrings/ \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-    cudnn-cuda-12 \
+    cudnn \
     && rm /tmp/cudnn.deb \
     && rm -rf /var/lib/apt/lists/*
 
