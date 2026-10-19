@@ -103,7 +103,7 @@ python setup.py build_ext --inplace
 ```bash
 cd 3rdparty/deepleraing
 
-# 1. 准备数据：软链接 nuScenes 数据目录（配置中 dataset_root="data/nuscenes/"，
+# 1. 准备数据：软链接 nuScenes 数据目录（配置中 dataset_root="data/nuscenes/",
 #    需要 nuscenes_infos_train.pkl / nuscenes_infos_val.pkl / nuscenes_dbinfos_train.pkl）
 ln -s /path/to/nuscenes data/nuscenes
 
@@ -160,21 +160,8 @@ python deploy/inferencer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth 
 （相机深度投影、几何与 bev_pool、体素化 + 稀疏卷积、bbox 解码），
 支持 `batch=1` 静态形状，解码结果与 torch 参考一致。
 
-```bash
-# 1. 在有 GPU 的机器导出 C++ 输入/权重/参考（一次即可）
-python tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-    --out-dir deploy_inputs --sample-index 0
-
-# 2. 编译（用户机器：Ubuntu 22.04 / CUDA 12.8 / TRT 10.9.0.34）
-cd src/cpp_infer
-cmake -B build -DTENSORRT_ROOT=/path/to/TensorRT-10.9.0.34
-cmake --build build -j
-
-# 3. 运行（engines 目录放 camera.backbone / camera.vtransform / fuser / head.bbox）
-./build/dsb_infer --input-dir deploy_inputs --engine-dir ../../3rdparty/deepleraing/outputs/trt
-```
-
-详见 `src/cpp_infer/README.md`（流水线图、限制与待验证项）。
+详见 [`src/cpp_infer/README.md`](src/cpp_infer/README.md)：流水线图、输入导出、
+编译运行、工程内核对口与已知限制。
 
 ### launch 启动脚本
 
