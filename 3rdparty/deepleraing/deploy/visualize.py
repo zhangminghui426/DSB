@@ -66,8 +66,8 @@ def rot_z(ang_deg):
     return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], np.float32)
 
 
-def render_rot_gif(points, corners, colors, labels_text, pc_range, path,
-                   frames=24, fps=8):
+def render_rot_gif(points, corners, centers, colors, labels_text, pc_range,
+                   path, frames=24, fps=8):
     """BEV sweep 0..360 deg: rotate points + box corners, one gif frame each."""
     rot_frames = []
     step = 360.0 / frames
@@ -78,8 +78,10 @@ def render_rot_gif(points, corners, colors, labels_text, pc_range, path,
         p[:, :3] = p[:, :3] @ R.T
         c = corners.copy()
         c = c @ R.T
-        rot_frames.append(render_det_bev(p, c, np.zeros((0, 3), np.float32),
-                                         colors, labels_text, pc_range=pc_range))
+        cen = centers.copy()
+        cen = cen @ R.T
+        rot_frames.append(render_det_bev(p, c, cen, colors, labels_text,
+                                         pc_range=pc_range))
     save_gif(rot_frames, path, fps=fps)
 
 
@@ -167,8 +169,8 @@ def main():
     print(f"saved {jpg}  ({frame.size[0]}x{frame.size[1]})")
 
     gif = f"{stem}_bev_rot.gif"
-    render_rot_gif(points, corners, colors, labels_text, pc_range, gif,
-                   frames=args.rot_frames, fps=args.fps)
+    render_rot_gif(points, corners, centers, colors, labels_text, pc_range,
+                   gif, frames=args.rot_frames, fps=args.fps)
     print(f"saved {gif}  ({args.rot_frames} frames)")
 
 
