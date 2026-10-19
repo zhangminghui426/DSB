@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # usage: launch/visualize_trt.sh [checkpoint] [extra args...]
 # Renders TRT inference results to outputs/vis/:
-#   sample{N}_det.jpg      BEV + 6 camera views with projected 3D boxes
-#   sample{N}_bev_rot.gif  360-deg BEV rotation (24 frames)
+#   sample{N}_det.jpg            BEV + 6 camera views with projected 3D boxes
+#   sample{N}-{M}_seq.gif        temporal sequence gif (--frames N)
 # Reuse a previous dump with: --npz outputs/trt/sample5.npz
 set -e
 cd "$(dirname "$0")/.."

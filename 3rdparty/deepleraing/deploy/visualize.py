@@ -1,17 +1,18 @@
-"""Visualize TRT inference results: single-frame jpg + rotating-BEV gif.
+"""Visualize TRT inference results: per-frame jpgs + temporal-sequence gif.
 
-Runs the TRT pipeline (deploy.inferencer) on one val sample — or reuses an
-existing npz dump (boxes/scores/labels) — then renders to <out>/ (default
+Runs the TRT pipeline (deploy.inferencer) over consecutive val samples — or
+reuses one existing npz dump (single frame) — and renders to <out>/ (default
 outputs/vis/, kept separate from the model/ckpt tree):
 
-  sample{N}_det.jpg       single frame: BEV + 6 camera views with 3D boxes
-  sample{N}_bev_rot.gif   BEV rotating around z (24 frames, 360 deg)
+  sample{N}_det.jpg           BEV + 6 camera views with 3D boxes (per frame)
+  sample{start}-{end}_seq.gif temporal sequence (frames x fps), when --frames > 1
 
 Rendering reuses scripts/render.py (same drawing as scripts/visualize.py).
 
 Usage:
   python deploy/visualize.py CONFIG CKPT --engine_dir outputs/trt \
-      --sample-index 5 [--npz outputs/trt/sample5.npz] \
+      --sample-index 5 --frames 1 [--stride 1] \
+      [--npz outputs/trt/sample5.npz] \
       [--out outputs/vis] [--score_thr 0.3] [--max_boxes 40]
 """
 
@@ -46,83 +47,25 @@ def parse_args():
     p.add_argument("checkpoint", nargs="?", default=None,
                    help="needed for the online (TRT) mode; ignored with --npz")
     p.add_argument("--engine_dir", default=osp.join("outputs", "trt"))
-    p.add_argument("--sample-index", type=int, default=0)
+    p.add_argument("--sample-index", type=int, default=0,
+                   help="first frame index (consecutive samples = same-scene sweeps)")
+    p.add_argument("--frames", type=int, default=1,
+                   help="consecutive frames to render; >1 also writes a seq gif")
+    p.add_argument("--stride", type=int, default=1, help="frame subsample stride")
     p.add_argument("--npz", default=None,
                    help="reuse a dumped npz (boxes/scores/labels) instead of "
-                        "running the TRT pipeline")
+                        "running the TRT pipeline; single frame only")
     p.add_argument("--out", default=osp.join("outputs", "vis"))
     p.add_argument("--score_thr", type=float, default=0.3)
     p.add_argument("--max_boxes", type=int, default=40)
-    p.add_argument("--rot-frames", type=int, default=24,
-                   help="frames of the rotating-BEV gif (360 deg sweep)")
-    p.add_argument("--fps", type=int, default=8)
+    p.add_argument("--fps", type=int, default=4, help="seq gif frame rate")
     p.add_argument("--options", nargs="*", default=[])
     return p.parse_args()
 
 
-def rot_z(ang_deg):
-    a = np.deg2rad(ang_deg)
-    c, s = np.cos(a), np.sin(a)
-    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], np.float32)
-
-
-def render_rot_gif(points, corners, centers, colors, labels_text, pc_range,
-                   path, frames=24, fps=8):
-    """BEV sweep 0..360 deg: rotate points + box corners, one gif frame each."""
-    rot_frames = []
-    step = 360.0 / frames
-    for i in range(frames):
-        ang = i * step
-        R = rot_z(ang)
-        p = points.copy()
-        p[:, :3] = p[:, :3] @ R.T
-        c = corners.copy()
-        c = c @ R.T
-        cen = centers.copy()
-        cen = cen @ R.T
-        rot_frames.append(render_det_bev(p, c, cen, colors, labels_text,
-                                         pc_range=pc_range))
-    save_gif(rot_frames, path, fps=fps)
-
-
 @torch.no_grad()
-def main():
-    args = parse_args()
-    os.makedirs(args.out, exist_ok=True)
-    device = "cuda"
-
-    cfg = load_config(args.config, options=args.options)
-    ds = build_dataset(cfg.data.val)
-    sample = ds[args.sample_index]
-    batch = to_device(collate_fn([sample]), device)
-
-    # ---- boxes/scores/labels: TRT pipeline or reused npz -----------------
-    if args.npz:
-        assert osp.exists(args.npz), f"npz not found: {args.npz}"
-        d = np.load(args.npz)
-        boxes = torch.from_numpy(d["boxes"]).float()
-        scores = torch.from_numpy(d["scores"]).float()
-        labels = torch.from_numpy(d["labels"]).long()
-        mode = f"npz {args.npz}"
-    else:
-        assert args.checkpoint, "checkpoint required for the online TRT mode"
-        from models import build_model
-        from scripts.trainer import load_model_checkpoint
-
-        model = build_model(cfg.model).cuda().eval()
-        load_model_checkpoint(model, args.checkpoint, strict=True)
-
-        from deploy.inferencer import DetInferencer
-        from deploy.runtime import load_engines
-
-        engines = load_engines("det", osp.join("outputs", "onnx"),
-                               args.engine_dir, build=False)
-        inf = DetInferencer(model, engines, "det")
-        preds, _ = inf.infer(batch)
-        boxes, scores, labels = inf.decode(preds, batch["metas"])
-        mode = f"TRT engines {args.engine_dir}"
-
-    # ---- select boxes ----------------------------------------------------
+def render_frame(batch, sample, idx, boxes, scores, labels, args, mode):
+    """Select boxes, compose the BEV + 6-camera frame, return a PIL frame."""
     box_t = boxes.tensor if hasattr(boxes, "tensor") else boxes  # 3DBoxes -> raw
     scores = scores.float().cpu().numpy()
     labels = labels.cpu().numpy()
@@ -146,7 +89,6 @@ def main():
     pc_range = max(abs(float(np.asarray(
         sample["metas"].get("pc_range", [-54, 54]))[0])), 54.0)
 
-    # ---- single frame: BEV + 6 cameras -----------------------------------
     bev = render_det_bev(points, corners, centers, colors, labels_text,
                          pc_range=pc_range)
     lidar2image = batch["lidar2image"][0].cpu().numpy()  # (6,4,4)
@@ -158,20 +100,72 @@ def main():
         cam_colors.append(colors)
         cam_labels.append(labels_text)
 
-    title = (f"TRT sample {args.sample_index} | {mode} | "
+    title = (f"TRT sample {idx} | {mode} | "
              f"dets(score>={args.score_thr}): {n_sel}")
-    frame = compose_det_frame(cam_imgs, cam_corners, cam_P, cam_colors,
-                              cam_labels, bev, title, cam_names=CAM_NAMES)
+    return compose_det_frame(cam_imgs, cam_corners, cam_P, cam_colors,
+                             cam_labels, bev, title, cam_names=CAM_NAMES)
 
-    stem = osp.join(args.out, f"sample{args.sample_index}")
-    jpg = f"{stem}_det.jpg"
-    frame.save(jpg, quality=90)
-    print(f"saved {jpg}  ({frame.size[0]}x{frame.size[1]})")
 
-    gif = f"{stem}_bev_rot.gif"
-    render_rot_gif(points, corners, centers, colors, labels_text, pc_range,
-                   gif, frames=args.rot_frames, fps=args.fps)
-    print(f"saved {gif}  ({args.rot_frames} frames)")
+@torch.no_grad()
+def main():
+    args = parse_args()
+    os.makedirs(args.out, exist_ok=True)
+    device = "cuda"
+
+    assert not (args.npz and args.frames > 1), \
+        "--npz mode is single-frame; drop --frames or run without --npz"
+    indices = list(range(args.sample_index,
+                         args.sample_index + args.frames * args.stride,
+                         args.stride))
+
+    cfg = load_config(args.config, options=args.options)
+    ds = build_dataset(cfg.data.val)
+
+    # online mode: load model + engines once, reuse for every frame
+    inf = None
+    if not args.npz:
+        assert args.checkpoint, "checkpoint required for the online TRT mode"
+        from models import build_model
+        from scripts.trainer import load_model_checkpoint
+
+        model = build_model(cfg.model).cuda().eval()
+        load_model_checkpoint(model, args.checkpoint, strict=True)
+
+        from deploy.inferencer import DetInferencer
+        from deploy.runtime import load_engines
+
+        engines = load_engines("det", osp.join("outputs", "onnx"),
+                               args.engine_dir, build=False)
+        inf = DetInferencer(model, engines, "det")
+
+    frames_pil = []
+    for idx in indices:
+        sample = ds[idx]
+        batch = to_device(collate_fn([sample]), device)
+
+        if args.npz:
+            d = np.load(args.npz)
+            boxes = torch.from_numpy(d["boxes"]).float()
+            scores = torch.from_numpy(d["scores"]).float()
+            labels = torch.from_numpy(d["labels"]).long()
+            mode = f"npz {args.npz}"
+        else:
+            preds, _ = inf.infer(batch)
+            boxes, scores, labels = inf.decode(preds, batch["metas"])
+            mode = f"TRT engines {args.engine_dir}"
+
+        frame = render_frame(batch, sample, idx, boxes, scores, labels,
+                             args, mode)
+        jpg = osp.join(args.out, f"sample{idx}_det.jpg")
+        frame.save(jpg, quality=90)
+        print(f"saved {jpg}  ({frame.size[0]}x{frame.size[1]})")
+        frames_pil.append(frame)
+
+    if len(frames_pil) > 1:
+        gif = osp.join(args.out,
+                       f"sample{indices[0]}-{indices[-1]}_seq.gif")
+        save_gif(frames_pil, gif, fps=args.fps)
+        print(f"saved {gif}  ({len(frames_pil)} frames, fps {args.fps})")
 
 
 if __name__ == "__main__":

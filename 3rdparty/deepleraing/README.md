@@ -120,10 +120,13 @@ TRT 强类型说明（TRT >= 10.12 / 11.x）：精度由 ONNX 图表达（Cast/Q
 TRT 推理结果渲染到 `outputs/vis/`（与模型/ckpt 目录分离，jpg + gif）：
 
 ```bash
-# 现场跑 TRT 推理并可视化（单样本）：BEV + 6 相机投影 jpg + 360° 旋转 gif
+# 现场跑 TRT 推理并可视化：单帧（BEV + 6 相机投影 jpg）
 launch/visualize_trt.sh --sample-index 5
 
-# 复用已 dump 的 npz（跳过模型推理，仅渲染；checkpoint 可省略）
+# 多帧时间序列：连续渲染 10 帧（同一场景连续 sweep），另存 seq gif
+launch/visualize_trt.sh --sample-index 5 --frames 10 --fps 4
+
+# 复用已 dump 的 npz（跳过模型推理，仅渲染；checkpoint 可省略，单帧）
 python deploy/visualize.py configs/det_convfuser.py \
     --npz outputs/trt/sample5.npz --sample-index 5 --out outputs/vis
 ```
@@ -132,12 +135,12 @@ python deploy/visualize.py configs/det_convfuser.py \
 
 ```
 outputs/vis/
-  sample5_det.jpg       # BEV 鸟瞰 + 6 相机视图（3D 框投影，含类别/分数）
-  sample5_bev_rot.gif   # BEV 绕 z 旋转 360°（默认 24 帧，fps 8）
+  sample5_det.jpg             # 单帧：BEV 鸟瞰 + 6 相机视图（3D 框投影，含类别/分数）
+  sample5-14_seq.gif          # --frames 10：时间序列动画（默认 fps 4）
 ```
 
 可选参数：`--score_thr 0.3`（过滤低分框）、`--max_boxes 40`（最多框数）、
-`--rot-frames 24 --fps 8`（gif 帧数/帧率）。渲染复用 `scripts/render.py`
+`--stride 1`（帧间隔，用于降采样）。渲染复用 `scripts/render.py`
 （与 torch 侧 `scripts/visualize.py` 同一套绘图）。
 
 ## 模型 I/O 约定
