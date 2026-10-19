@@ -94,12 +94,19 @@ def build_engine(onnx_path, engine_path, fp16=False, workspace=2 << 30):
     config = builder.create_builder_config()
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace)
     if fp16:
-        # TRT 10 renamed BuilderFlag.FP16 -> HALF; support both.
-        flag = getattr(trt.BuilderFlag, "FP16", None)
-        if flag is None:
-            flag = getattr(trt.BuilderFlag, "HALF", None)
-        assert flag is not None, "no FP16/HALF builder flag found"
-        config.set_flag(flag)
+        # TRT 10 renamed nothing here (FP16 exists until 10.11, deprecated
+        # 10.12+); TRT 11 removed the flag entirely (strong typing + ModelOpt).
+        # Probe both spellings; if absent, fall back to an FP32 build.
+        flag = next(
+            (getattr(trt.BuilderFlag, n, None) for n in ("FP16", "HALF")
+             if getattr(trt.BuilderFlag, n, None) is not None),
+            None,
+        )
+        if flag is not None:
+            config.set_flag(flag)
+        else:
+            print(f"[trt] WARNING: BuilderFlag FP16/HALF unavailable in "
+                  f"tensorrt {trt.__version__}; building FP32 engine")
     serialized = builder.build_serialized_network(network, config)
     assert serialized is not None, f"engine build failed: {onnx_path}"
     os.makedirs(osp.dirname(engine_path), exist_ok=True)
