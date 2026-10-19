@@ -12,7 +12,7 @@ import torch
 __all__ = ["camera_bev_from_depthnet"]
 
 
-def camera_bev_from_depthnet(model, batch, depthnet, task="det", feats=None):
+def camera_bev_from_depthnet(model, batch, depthnet, task="det"):
     """depthnet logits (B*N, D+C, fH, fW) -> camera BEV (B, C*Dz, H, W).
 
     Mirrors DepthLSSTransform/LSSTransform forward after the depth network:
@@ -25,8 +25,6 @@ def camera_bev_from_depthnet(model, batch, depthnet, task="det", feats=None):
         batch: collated sample dict (img + camera matrices on the model device).
         depthnet: (B*N, D+C, fH, fW) depth-network logits.
         task: "det" or "seg" (informational; both share this code path).
-        feats: optional (B*N, C, fH, fW) camera backbone output. When given
-            (e.g. from a TRT engine) the backbone/neck are not re-run.
 
     Returns:
         (B, C*Dz, H, W) camera BEV feature (Z collapsed, per base bev_pool).
@@ -36,16 +34,6 @@ def camera_bev_from_depthnet(model, batch, depthnet, task="det", feats=None):
     B, N = img.shape[0], img.shape[1]
     fH, fW = vt.feature_size
     D, C = vt.D, vt.C
-
-    # camera backbone + neck (torch runtime, not part of the exported graphs)
-    if feats is None:
-        x = img.view(B * N, *img.shape[2:])
-        x = model.encoders["camera"]["backbone"](x)
-        x = model.encoders["camera"]["neck"](x)
-        if not torch.is_tensor(x):
-            x = x[0]
-        feats = x
-    x = feats.view(B, N, C, fH, fW)
 
     # fold depth probability into features:
     # (B,N,D,fH,fW) * (B,N,C,fH,fW) -> (B,N,C,D,fH,fW) -> (B,N,D,fH,fW,C)
