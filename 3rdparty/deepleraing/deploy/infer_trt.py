@@ -94,7 +94,12 @@ def build_engine(onnx_path, engine_path, fp16=False, workspace=2 << 30):
     config = builder.create_builder_config()
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace)
     if fp16:
-        config.set_flag(trt.BuilderFlag.FP16)
+        # TRT 10 renamed BuilderFlag.FP16 -> HALF; support both.
+        flag = getattr(trt.BuilderFlag, "FP16", None)
+        if flag is None:
+            flag = getattr(trt.BuilderFlag, "HALF", None)
+        assert flag is not None, "no FP16/HALF builder flag found"
+        config.set_flag(flag)
     serialized = builder.build_serialized_network(network, config)
     assert serialized is not None, f"engine build failed: {onnx_path}"
     os.makedirs(osp.dirname(engine_path), exist_ok=True)
