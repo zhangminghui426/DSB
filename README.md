@@ -30,7 +30,9 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 │   │   │   ├── perception.py # 统一顶层模型
 │   │   │   └── calib_board_detector/ # 标定板检测器（SECOND）
 │   │   ├── datasets/       # 数据集和数据处理
-│   │   ├── scripts/        # 训练、推理、可视化脚本
+│   │   ├── scripts/        # 训练、测试、导出、可视化脚本（仅 .py）
+│   │   ├── deploy/         # 导出/TRT 推理运行时组件（bev_pool/lidar/preprocess/infer_trt）
+│   │   ├── launch/         # shell 启动脚本（train/eval/export/infer_trt/visualize）
 │   │   ├── configs/        # 配置文件
 │   │   ├── ops/            # 自定义 CUDA 算子
 │   │   ├── tools/          # 数据准备工具
@@ -121,6 +123,49 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 - `--no_amp`：关闭混合精度
 - `--no_eval`：跳过训练中评估
 - `--options key=value`：点号式配置覆盖，如 `--options optimizer.lr=2e-4`
+
+### 导出 ONNX 与 TensorRT 推理
+
+模型按 CUDA-BEVFusion 布局**分模块导出**（det/seg 各 4 张图），自定义 CUDA
+算子（bev_pool / 体素化 / sparse conv）留在 torch runtime，不进入 ONNX：
+
+| 图 | 输入 → 输出 | 说明 |
+|---|---|---|
+| `camera.backbone.onnx` | img `(1,6,3,256,704)` → feats `(1,6,256,32,88)` | Swin-T + LSS-FPN |
+| `camera.vtransform.onnx` | feats (+depth) → depthnet `(1,6,D+C,32,88)` | det 含 dtransform |
+| `fuser.onnx` | cam_bev + lidar_bev → decoder_feat `(1,512,180,180)` | fuser+SECOND+FPN |
+| `head.bbox/map.onnx` | decoder_feat → 8 个 pred / masks | 不解码，decode 留在 torch |
+
+```bash
+cd 3rdparty/deepleraing
+
+# 1. 导出 ONNX（--verify 用 onnxruntime 逐图校验，需 pip install onnx onnxruntime）
+python scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task det --verify
+
+# 2. 构建 TRT engine（缓存到 outputs/trt/，--fp16 可选）并跑一个 val 样本
+python deploy/infer_trt.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+    --engine_dir outputs/trt --build --fp16 --verify
+
+# 3. 保存解码结果
+python deploy/infer_trt.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+    --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
+```
+
+### launch 启动脚本
+
+所有 shell 启动脚本统一放在 `launch/`（`scripts/` 只放 .py）：
+
+```bash
+launch/prepare_data.sh            # 数据软链接 + infos pkl 生成
+launch/train.sh det               # 训练（det|seg|multitask|occ|m0|stereo|stbase）
+launch/eval.sh det                # 评估
+launch/visualize.sh det           # 可视化
+launch/export.sh det              # 导出 ONNX
+launch/infer_trt.sh det           # TRT 推理（加 --build --fp16 --verify 透传）
+```
+
+`launch/env.sh` 可覆盖：`PY`（conda python）、`CUDA_HOME`、`NGPU`（多卡
+torchrun）等环境变量。
 
 ### 启动 Streamlit UI
 
