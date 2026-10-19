@@ -56,7 +56,7 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 cd packet/
 bash download_env.sh
 # TensorRT 需手动从 https://developer.nvidia.com/tensorrt/download/10x 下载
-# 保存为 packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.gz
+# 保存为 packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.tar
 cd ..
 
 # 2. 构建镜像
@@ -73,7 +73,7 @@ python setup.py build_ext --inplace
 ```
 
 Docker 环境配置：
-- Ubuntu 22.04 + CUDA 12.8 + cuDNN 9.5 + TensorRT 10.9
+- Ubuntu 22.04 + CUDA 12.8.2 + cuDNN 9.26.1 + TensorRT 10.9.0.34
 - ROS2 Humble（ros-base + mcap + cv_bridge + pcl_ros + colcon）
 - Miniconda3，DSB 环境 Python 3.10
 - PyTorch 2.8.0 + cu12.8
