@@ -121,6 +121,7 @@ def main():
         mode = f"TRT engines {args.engine_dir}"
 
     # ---- select boxes ----------------------------------------------------
+    box_t = boxes.tensor if hasattr(boxes, "tensor") else boxes  # 3DBoxes -> raw
     scores = scores.float().cpu().numpy()
     labels = labels.cpu().numpy()
     keep = scores >= args.score_thr
@@ -129,7 +130,8 @@ def main():
     n_sel = len(sel)
 
     if n_sel > 0:
-        corners, centers = shifted_corners(boxes[torch.from_numpy(sel)].cpu().numpy())
+        corners, centers = shifted_corners(
+            box_t[torch.from_numpy(sel)].cpu().numpy())
         colors = [DET_COLORS[int(labels[i]) % len(DET_COLORS)] for i in sel]
         labels_text = [f"{DET_CLASSES[int(labels[i])]} {scores[i]:.2f}"
                        for i in sel]
