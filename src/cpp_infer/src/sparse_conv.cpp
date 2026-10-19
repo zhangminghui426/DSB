@@ -1,6 +1,8 @@
 #include "dsb_infer/ops.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 namespace dsb {
 

@@ -1,8 +1,10 @@
-#include "dsb_infer/ops.hpp"
+#include "dsb_infer/trt_engine.hpp"
 
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
 
+#include <cstdio>
+#include <fstream>
 #include <memory>
 
 namespace dsb {

@@ -1,6 +1,10 @@
 #include "dsb_infer/ops.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <numeric>
+#include <sstream>
+#include <unordered_map>
 
 namespace dsb {
 
@@ -13,7 +17,7 @@ Mat3 Mat3::identity() {
 
 Mat3 Mat3::inverse(const Mat3 &a) {
   // general 3x3 inverse (cofactor / det)
-  float d = a.m[0] * (a.m[4] * a.m[8] - a.m[5] * a.m[7]) -
+  float d = a.m[0] * (a.m[4] * a.m[5] - a.m[5] * a.m[7]) -
             a.m[1] * (a.m[3] * a.m[8] - a.m[5] * a.m[6]) +
             a.m[2] * (a.m[3] * a.m[7] - a.m[4] * a.m[6]);
   if (std::abs(d) < 1e-12f) throw std::runtime_error("singular 3x3 inverse");

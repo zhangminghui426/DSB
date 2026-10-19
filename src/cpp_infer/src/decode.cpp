@@ -1,7 +1,8 @@
 #include "dsb_infer/ops.hpp"
 
+#include <algorithm>
 #include <cmath>
-#include <functional>
+#include <numeric>
 
 namespace dsb {
 
