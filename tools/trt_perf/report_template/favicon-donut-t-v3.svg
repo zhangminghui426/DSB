@@ -1,0 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+     SPDX-License-Identifier: Apache-2.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <circle cx="16" cy="16" r="14" fill="none" stroke="#5b8cff" stroke-width="3"/>
+  <text x="16" y="22" text-anchor="middle" font-family="Georgia, serif" font-size="17" font-weight="bold" fill="#e6eaf2">T</text>
+</svg>

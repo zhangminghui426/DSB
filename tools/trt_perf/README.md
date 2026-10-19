@@ -20,7 +20,8 @@ cd 3rdparty/deepleraing
 bash launch/perf_trt.sh det          # -> outputs/perf/layers_*.json + profile_*.json
 #    pip-only tensorrt 无 trtexec 时：TRTEXEC=/path/to/TensorRT-10.9/bin/trtexec bash launch/perf_trt.sh det
 
-# 2) 生成报告
+# 2) 生成报告（首次运行会自动从 NVIDIA/TensorRT 官方仓库拉取 report_template 的
+#    app.js / netron-assets.js 大文件，见 run.sh）
 bash ../../tools/trt_perf/run.sh     # -> outputs/perf/report/（analyze/validate/package 一条龙）
 
 # 3) 预览
@@ -32,5 +33,6 @@ python -m http.server 8765 --bind 127.0.0.1 --directory 3rdparty/deepleraing/out
 
 - `scripts/` — analyze_trt_perf.py / validate_analyze_data.py / package_report.py / trt_perf 包
 - `schemas/analyze-data.schema.json` — 分析输出 JSON 的结构化校验 schema
-- `report_template/` — 报告 HTML 模板（含 netron 资产）
+- `report_template/` — 报告 HTML 模板（index.html/styles.css/favicon/ThirdPartyNotices；
+  app.js 与 netron-assets.js 体积较大未入库，由 run.sh 自动从 NVIDIA 官方 raw 拉取）
 - `run.sh` — 本地封装（analyze → validate → package）
