@@ -42,6 +42,7 @@ endif()
 
 add_executable(dsb_infer
   src/main.cpp
+  src/pipeline.cpp
   src/trt_engine.cpp
   src/ops.cpp
   src/sparse_conv.cpp

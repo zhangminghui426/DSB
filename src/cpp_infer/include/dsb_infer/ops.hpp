@@ -1,24 +1,12 @@
 #pragma once
-// Inference ops declarations (CPU reference implementations + TRT wrapper).
+// Inference ops declarations (CPU reference implementations).
 
-#include "dsb_infer/common.hpp"
+#include "dsb_infer/config.hpp"
+#include "dsb_infer/tensor.hpp"
+
+#include <vector>
 
 namespace dsb {
-
-// ---------- TensorRT engine (trt_engine.cpp) ---------------------------
-class TrtEngine {
- public:
-  explicit TrtEngine(const std::string &engine_path);
-  ~TrtEngine();
-  // inputs: name -> flat float tensor (static shapes). Returns outputs map
-  // (shapes read from the engine bindings).
-  std::map<std::string, Tensor> run(
-      const std::map<std::string, Tensor> &inputs);
-
- private:
-  struct Impl;
-  Impl *impl_;
-};
 
 // ---------- CPU ops (ops.cpp) --------------------------------------------
 // Lidar-depth projection for all cameras -> (1, N, 1, H, W) sparse depth.
@@ -57,7 +45,7 @@ struct DetOutput {
   Tensor labels;  // (M,) int
 };
 // preds order: dense_heatmap, heatmap, query_heatmap_score, center, height,
-// dim, rot, vel (matches DET_HEAD_KEYS in scripts/export.py).
+// dim, rot, vel (matches DET_HEAD_KEYS in deploy/graphs.py).
 DetOutput decode_det(const Config &cfg, const std::vector<Tensor> &preds);
 
 }  // namespace dsb
