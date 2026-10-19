@@ -13,4 +13,4 @@ case "$TASK" in
 esac
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then CKPT="$1"; shift; fi
 [ -f "$CKPT" ] || { echo "checkpoint missing: $CKPT" >&2; exit 2; }
-"$PY" deploy/infer_trt.py "$CFG" "$CKPT" --task "$TASK" "$@"
+"$PY" deploy/trt_infer.py "$CFG" "$CKPT" --task "$TASK" "$@"
