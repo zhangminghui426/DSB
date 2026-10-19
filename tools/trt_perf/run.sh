@@ -19,6 +19,18 @@ REPORT="$PERF_DIR/report"
 ls "$PERF_DIR"/layers_*.json >/dev/null 2>&1 || { echo \
   "no layers_*.json in $PERF_DIR — collect with launch/perf_trt.sh" >&2; exit 2; }
 
+# Large bundled assets (app.js / netron-assets.js) are not committed to this
+# repo; package_report.py's template validation requires them, so fetch the
+# exact NVIDIA originals from the official TensorRT repo when missing.
+NETRON_RAW="https://raw.githubusercontent.com/NVIDIA/TensorRT/main/.agents/skills/trt-perf-analysis/report_template"
+for f in app.js netron-assets.js; do
+  if [ ! -f "$HERE/report_template/$f" ]; then
+    echo "[perf] fetching $f from NVIDIA/TensorRT (raw)..."
+    curl -fsSL "$NETRON_RAW/$f" -o "$HERE/report_template/$f" \
+      || { echo "error: failed to download $f" >&2; exit 2; }
+  fi
+done
+
 echo "[perf] analyzing $PERF_DIR"
 "$PY" "$HERE/scripts/analyze_trt_perf.py" "$PERF_DIR" \
   --model-name "$MODEL_NAME" --output "$STAGE"
