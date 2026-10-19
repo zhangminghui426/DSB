@@ -10,7 +10,7 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 | 标定板检测器 | `3rdparty/deepleraing/models/calib_board_detector/` | SECOND 3D 目标检测，用于自动检测标定板 |
 | 雷达-相机标定 | `3rdparty/fast_calib/` | 激光雷达与鱼眼相机外参标定算法 |
 | Streamlit UI | `app/` | 可视化界面，支持上传 mcap、运行标定、3D 预览 |
-| 工程代码 | `src/` | 后续 ROS2 集成代码 |
+| 工程代码 | `src/` | C++ 推理（src/cpp_infer）及后续集成代码 |
 
 ## 目录结构
 
@@ -18,7 +18,7 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 项目根目录/
 ├── app/                    # Streamlit UI
 │   └── app.py              # 主界面
-├── src/                    # 工程代码（ROS2 集成）
+├── src/                    # 工程代码（src/cpp_infer: C++ TRT 推理）
 ├── 3rdparty/
 │   ├── deepleraing/       # 深度学习模型库
 │   │   ├── models/         # 模型定义
@@ -41,6 +41,7 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 │       ├── scripts/        # 标定主程序、检测器接口
 │       ├── config/         # 标定配置
 │       └── tools/          # 可视化工具
+├── tools/                  # 工程工具（export_cpp_input.py: C++ 推理输入导出）
 ├── Dockerfile              # Docker 构建文件
 ├── requirements.txt        # Python 依赖
 ├── packet/                 #  Docker 安装包（CUDA/cuDNN/TensorRT）
@@ -150,6 +151,28 @@ python deploy/infer_trt.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
 python deploy/infer_trt.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```
+
+### C++ 推理（src/cpp_infer）
+
+纯 C++ 推理流水线（无 Python）：4 个 TRT engine + C++ 侧 torch runtime
+（相机深度投影、几何与 bev_pool、体素化 + 稀疏卷积、bbox 解码），
+支持 `batch=1` 静态形状，解码结果与 torch 参考一致。
+
+```bash
+# 1. 在有 GPU 的机器导出 C++ 输入/权重/参考（一次即可）
+python tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+    --out-dir deploy_inputs --sample-index 0
+
+# 2. 编译（用户机器：Ubuntu 22.04 / CUDA 12.8 / TRT 10.9.0.34）
+cd src/cpp_infer
+cmake -B build -DTENSORRT_ROOT=/path/to/TensorRT-10.9.0.34
+cmake --build build -j
+
+# 3. 运行（engines 目录放 camera.backbone / camera.vtransform / fuser / head.bbox）
+./build/dsb_infer --input-dir deploy_inputs --engine-dir ../../3rdparty/deepleraing/outputs/trt
+```
+
+详见 `src/cpp_infer/README.md`（流水线图、限制与待验证项）。
 
 ### launch 启动脚本
 
