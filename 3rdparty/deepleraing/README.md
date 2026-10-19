@@ -21,8 +21,8 @@ deepleraing/
 │   └── calib_board_detector/  # 标定板检测器（SECOND）
 ├── datasets/          # 数据集与数据处理
 ├── scripts/           # 训练/评估/测试脚本（仅 .py）
-├── deploy/            # 导出/构建/推理包（export/builder/runtime/inferencer/config/graphs + bev_pool/lidar/preprocess）
-├── launch/            # shell 启动脚本（train/eval/export/infer_trt/perf_trt/visualize）
+├── deploy/            # 导出/构建/推理包（export/builder/runtime/inferencer/config/graphs + bev_pool/lidar/preprocess + visualize）
+├── launch/            # shell 启动脚本（train/eval/export/infer_trt/perf_trt/visualize_trt）
 ├── configs/           # 训练与部署配置
 ├── ops/               # 自定义 CUDA 算子（bev_pool_v2 / voxel / iou3d）
 ├── tools/             # 数据准备与输入导出工具
@@ -75,7 +75,7 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 | `camera.backbone.onnx` | img `(1,6,3,256,704)` → feats `(1,6,256,32,88)` | Swin-T + LSS-FPN |
 | `camera.vtransform.onnx` | feats (+depth) → depthnet `(1,6,D+C,32,88)` | det 含 dtransform |
 | `fuser.onnx` | cam_bev + lidar_bev → decoder_feat `(1,512,180,180)` | fuser+SECOND+FPN |
-| `head.bbox/map.onnx` | decoder_feat → 8 个 pred / masks | 不解码，decode 留在 torch |
+| `head.bbox/map.onnx` | decoder_feat → 9 个 pred（含 query_labels）/ masks | 不解码，decode 留在 torch |
 
 ```bash
 # 1. 导出 ONNX 并构建 TRT engine（一步完成；--verify 用 onnxruntime 逐图校验，
@@ -98,6 +98,7 @@ launch/eval.sh det                # 评估
 launch/visualize.sh det           # 可视化
 launch/export.sh det              # 导出 ONNX
 launch/infer_trt.sh det           # TRT 推理（加 --build --fp16 --verify 透传）
+launch/visualize_trt.sh det       # TRT 推理结果可视化（jpg/gif -> outputs/vis/）
 launch/perf_trt.sh det            # trtexec 采集逐层 profile -> outputs/perf/
 ```
 
@@ -114,6 +115,31 @@ TRT 强类型说明（TRT >= 10.12 / 11.x）：精度由 ONNX 图表达（Cast/Q
 `builder.py`/`inferencer.py` 加 `--autocast-fp16`。TRT < 10.12（docker 目标
 10.9.0.34）自动回退弱类型，`--fp16` 照常生效（版本在构建时探测）。
 
+## 推理结果可视化
+
+TRT 推理结果渲染到 `outputs/vis/`（与模型/ckpt 目录分离，jpg + gif）：
+
+```bash
+# 现场跑 TRT 推理并可视化（单样本）：BEV + 6 相机投影 jpg + 360° 旋转 gif
+launch/visualize_trt.sh --sample-index 5
+
+# 复用已 dump 的 npz（跳过模型推理，仅渲染；checkpoint 可省略）
+python deploy/visualize.py configs/det_convfuser.py \
+    --npz outputs/trt/sample5.npz --sample-index 5 --out outputs/vis
+```
+
+输出：
+
+```
+outputs/vis/
+  sample5_det.jpg       # BEV 鸟瞰 + 6 相机视图（3D 框投影，含类别/分数）
+  sample5_bev_rot.gif   # BEV 绕 z 旋转 360°（默认 24 帧，fps 8）
+```
+
+可选参数：`--score_thr 0.3`（过滤低分框）、`--max_boxes 40`（最多框数）、
+`--rot-frames 24 --fps 8`（gif 帧数/帧率）。渲染复用 `scripts/render.py`
+（与 torch 侧 `scripts/visualize.py` 同一套绘图）。
+
 ## 模型 I/O 约定
 
 详见 [`docs/MODEL_IO.md`](docs/MODEL_IO.md)：坐标系约定、forward 输入键、
@@ -122,4 +148,4 @@ TRT 强类型说明（TRT >= 10.12 / 11.x）：精度由 ONNX 图表达（Cast/Q
 ## 子模块
 
 - `models/calib_board_detector/`：SECOND 标定板检测器（训练与推理，见
-  [`models/calib_board_detector/README.md`](models/calib_board_detector/README.md)）
+  [`models/calib_board_detector/README.md`](models/calib_board_detector/README.md))
