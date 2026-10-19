@@ -45,7 +45,8 @@ ENV CUDA_HOME=/usr/local/cuda-12.8
 
 # ========== cuDNN 9.26.1 (deb repo install) ==========
 RUN dpkg -i /tmp/cudnn.deb \
-    && cp /var/cudnn-local-repo-ubuntu2204-9.26.1/cudnn-*-keyring.gpg /usr/share/keyrings/ \
+    && cp /var/cudnn-local-repo-ubuntu2204-9.26.1/cudnn-local-*-keyring.gpg /etc/apt/trusted.gpg.d/ \
+    && sed -i 's/ signed-by=[^ ]*//' /etc/apt/sources.list.d/cudnn-local-*.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
     cudnn-cuda-12 \
