@@ -16,6 +16,7 @@ COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.tar /tmp/tensorrt.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
+    sudo \
     wget \
     curl \
     vim \
