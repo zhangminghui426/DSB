@@ -73,14 +73,18 @@ def graph_io(task):
 
 
 def build_engine(onnx_path, engine_path, fp16=False, workspace=2 << 30):
-    """ONNX -> TensorRT engine (static shapes, EXPLICIT_BATCH)."""
+    """ONNX -> TensorRT engine (static shapes)."""
     import tensorrt as trt
 
     logger = trt.Logger(trt.Logger.WARNING)
     builder = trt.Builder(logger)
-    network = builder.create_network(
-        1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
-    )
+    # TRT 10 removed NetworkDefinitionCreationFlag.EXPLICIT_BATCH (explicit
+    # batch is the default since TRT 8); guard for older versions.
+    explicit = getattr(trt.NetworkDefinitionCreationFlag, "EXPLICIT_BATCH", None)
+    if explicit is None:
+        network = builder.create_network()
+    else:
+        network = builder.create_network(1 << int(explicit))
     parser = trt.OnnxParser(network, logger)
     with open(onnx_path, "rb") as f:
         if not parser.parse(f.read()):
