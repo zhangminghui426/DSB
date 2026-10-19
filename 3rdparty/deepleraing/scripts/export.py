@@ -10,14 +10,15 @@ every exported graph is dense and TRT-parseable without custom plugins:
     head.bbox.onnx        : (1,512,180,180)                  -> 8 pred tensors (no decode)
   seg (4 graphs): same, minus depth; head.map outputs masks (1,6,200,200)
 
-Runtime split (deploy/infer_trt.py), mirroring CUDA-BEVFusion:
+Runtime split (deploy/trt_common.py + trt_build.py + trt_infer.py), mirroring
+CUDA-BEVFusion:
   TRT engines : camera backbone / depthnet / fuser+decoder / head
   torch+CUDA  : normalization + depth projection (deploy.preprocess), camera
                 geometry + bev_pool (ops CUDA ext) + vtransform downsample,
                 lidar voxelization + sparse encoder (spconv), box decode
 
-ONNX only here; TensorRT deployment lives in the separate cuda-bevfusion
-project (see ../cuda-bevfusion, referencing NVIDIA-AI-IOT/Lidar_AI_Solution).
+ONNX only here; TensorRT engine build + inference in deploy/ (see
+launch/export.sh / launch/infer_trt.sh / launch/perf_trt.sh).
 
 Usage (repo root):
   python scripts/export.py CONFIG CHECKPOINT --task det --verify
