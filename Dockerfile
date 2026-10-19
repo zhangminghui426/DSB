@@ -11,6 +11,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 COPY packet/cuda_12.8.2_570.211.01_linux.run /tmp/cuda.run
 COPY packet/cudnn-local-repo-ubuntu2204-9.26.1_1.0-1_amd64.deb /tmp/cudnn.deb
 COPY packet/TensorRT-10.9.0.34.Linux.x86_64-gnu.cuda-12.8.tar.tar /tmp/tensorrt.tar
+COPY packet/fish_install.yaml /tmp/fish_install.yaml
 
 # ========== System dependencies ==========
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -62,8 +63,12 @@ ENV TRT_HOME=/opt/tensorrt
 ENV PATH=${TRT_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${TRT_HOME}/lib:${LD_LIBRARY_PATH}
 
-# ========== ROS2 Humble (Ubuntu 22.04) ==========
+# ========== ROS2 Humble (fishros 一键安装, 国内源) ==========
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    python3 \
+    python3-yaml \
+    python3-distro \
     locales \
     && locale-gen en_US en_US.UTF-8 \
     && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
@@ -72,15 +77,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
+# fishros 一键安装 ROS2 humble
+# fish_install.yaml 提供自动应答（按交互顺序 9 项），避免交互式输入
+RUN wget -q http://fishros.com/install -O /tmp/fishros \
+    && FISH_INSTALL_CONFIG=/tmp/fish_install.yaml bash /tmp/fishros \
+    && rm -f /tmp/fishros /tmp/fish_install.yaml
+
+# 补充安装 mcap/bag/cv_bridge/pcl 等工具包
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gnupg2 \
-    lsb-release \
-    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-    -o /usr/share/keyrings/ros-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
-    | tee /etc/apt/sources.list.d/ros2.list > /dev/null \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    ros-humble-ros-base \
     ros-humble-ros2bag \
     ros-humble-rosbag2 \
     ros-humble-rosbag2-storage-mcap \
@@ -92,9 +96,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions \
     python3-rosdep \
     python3-vcstool \
-    && rm -rf /var/lib/apt/lists/* \
-    && rosdep init || echo "rosdep already initialized" \
-    && rosdep update --rosdistro humble
+    && rm -rf /var/lib/apt/lists/*
 
 ENV ROS_DISTRO=humble
 ENV ROS_ROOT=/opt/ros/humble
