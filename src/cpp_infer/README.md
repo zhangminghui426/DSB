@@ -94,9 +94,9 @@ dsb_infer --input-dir deploy_inputs --engine-dir engines [--dump-dir out]
 2. **spconv 权重 K 维邻域顺序按 z→y→x 枚举**（与 `tools/export_cpp_input.py`
    写入 meta 的 offsets 一一对应）。若对照发现数值错位，只需调整
    `export_cpp_input.py` 中 `collect_sparse_layers` 的 offsets 生成顺序后重导。
-3. **TRT engine tensor 名**按 `deploy/infer_trt.py` 的输入输出名
+3. **TRT engine tensor 名**按 `deploy/trt_common.py` 的输入输出名
    （`img/feats/depth/depthnet/cam_bev/lidar_bev/decoder_feat` + 8 个 head 输出）
    访问；若导出脚本改名，`main.cpp` 相应调整。
-4. `batch=1` 静态形状，与 `infer_trt.py --build` 默认一致。
+4. `batch=1` 静态形状，与 `deploy/trt_build.py` 默认一致。
 5. 图像输入为 eval 协议预处理后的归一化张量（bin）；raw 图解码 + 预处理
    的 OpenCV 入口未实现。

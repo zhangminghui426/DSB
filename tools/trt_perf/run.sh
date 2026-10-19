@@ -9,7 +9,13 @@
 # (collect them with 3rdparty/deepleraing/launch/perf_trt.sh).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PERF_DIR="${1:-3rdparty/deepleraing/outputs/perf}"
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+# Resolve PERF_DIR against the repo root so the script works from any CWD.
+PERF_DIR="${1:-$REPO_ROOT/3rdparty/deepleraing/outputs/perf}"
+case "$PERF_DIR" in
+  /*) ;;
+  *) PERF_DIR="$REPO_ROOT/$PERF_DIR" ;;
+esac
 MODEL_NAME="${MODEL_NAME:-bevfusion-det}"
 PY="${PY:-python3}"
 STAGE="$PERF_DIR/analyze-data.json"

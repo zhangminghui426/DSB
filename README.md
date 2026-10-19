@@ -10,7 +10,7 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 | 标定板检测器 | `3rdparty/deepleraing/models/calib_board_detector/` | SECOND 3D 目标检测，用于自动检测标定板 |
 | 雷达-相机标定 | `3rdparty/fast_calib/` | 激光雷达与鱼眼相机外参标定算法 |
 | Streamlit UI | `app/` | 可视化界面，支持上传 mcap、运行标定、3D 预览 |
-| 工程代码 | `src/` | C++ 推理（src/cpp_infer）及后续集成代码 |
+| 工程代码 | `src/` | 后续 ROS2 集成代码 |
 
 ## 目录结构
 
@@ -18,7 +18,7 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 项目根目录/
 ├── app/                    # Streamlit UI
 │   └── app.py              # 主界面
-├── src/                    # 工程代码（src/cpp_infer: C++ TRT 推理）
+├── src/                    # 工程代码（ROS2 集成）
 ├── 3rdparty/
 │   ├── deepleraing/       # 深度学习模型库
 │   │   ├── models/         # 模型定义
@@ -31,8 +31,8 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 │   │   │   └── calib_board_detector/ # 标定板检测器（SECOND）
 │   │   ├── datasets/       # 数据集和数据处理
 │   │   ├── scripts/        # 训练、测试、导出、可视化脚本（仅 .py）
-│   │   ├── deploy/         # 导出/TRT 推理运行时组件（bev_pool/lidar/preprocess/infer_trt）
-│   │   ├── launch/         # shell 启动脚本（train/eval/export/infer_trt/visualize）
+│   │   ├── deploy/         # 导出/TRT 推理运行时组件（trt_common/trt_build/trt_infer/bev_pool/lidar/preprocess）
+│   │   ├── launch/         # shell 启动脚本（train/eval/export/infer_trt/perf_trt/visualize）
 │   │   ├── configs/        # 配置文件
 │   │   ├── ops/            # 自定义 CUDA 算子
 │   │   ├── tools/          # 数据准备工具
@@ -41,7 +41,6 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 │       ├── scripts/        # 标定主程序、检测器接口
 │       ├── config/         # 标定配置
 │       └── tools/          # 可视化工具
-├── tools/                  # 工程工具（export_cpp_input.py: C++ 推理输入导出）
 ├── Dockerfile              # Docker 构建文件
 ├── requirements.txt        # Python 依赖
 ├── packet/                 #  Docker 安装包（CUDA/cuDNN/TensorRT）
@@ -143,12 +142,13 @@ cd 3rdparty/deepleraing
 # 1. 导出 ONNX（--verify 用 onnxruntime 逐图校验，需 pip install onnx onnxruntime）
 python scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task det --verify
 
-# 2. 构建 TRT engine（缓存到 outputs/trt/，--fp16 可选）并跑一个 val 样本
-python deploy/infer_trt.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+# 2. 构建 TRT engine（缓存到 outputs/trt/；TRT >= 10.12 强类型下 FP32 ONNX 出
+#    FP32 engine，--fp16 需配合 --autocast-fp16，见 deploy/trt_build.py）并跑一个 val 样本
+python deploy/trt_infer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --engine_dir outputs/trt --build --fp16 --verify
 
 # 3. 保存解码结果
-python deploy/infer_trt.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+python deploy/trt_infer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```
 
@@ -185,7 +185,28 @@ launch/eval.sh det                # 评估
 launch/visualize.sh det           # 可视化
 launch/export.sh det              # 导出 ONNX
 launch/infer_trt.sh det           # TRT 推理（加 --build --fp16 --verify 透传）
+launch/perf_trt.sh det            # trtexec 采集逐层 profile -> outputs/perf/
 ```
+
+性能分析（NVIDIA trt-perf-analysis 工具已随仓库分发到 `tools/trt_perf/`）：
+
+```bash
+# 1. 采集（需 GPU + trtexec；pip-only tensorrt 无 trtexec 时用
+#    TRTEXEC 指向 tar 包 bin/trtexec：TRTEXEC=.../bin/trtexec bash launch/perf_trt.sh det）
+cd 3rdparty/deepleraing
+bash launch/perf_trt.sh det                        # -> outputs/perf/layers_*.json + profile_*.json
+# 2. 生成交互式 HTML 报告（首次运行自动从 NVIDIA/TensorRT 官方仓库拉取
+#    report_template 的 app.js / netron-assets.js 大文件）-> outputs/perf/report/
+bash ../../tools/trt_perf/run.sh
+# 3. 预览
+python -m http.server 8765 --bind 127.0.0.1 --directory outputs/perf/report
+```
+
+TRT 强类型说明（TRT >= 10.12 / 11.x）：精度由 ONNX 图表达（Cast/QDQ），
+`BuilderFlag.FP16/INT8` 已移除；FP32 ONNX 构建 FP32 engine。需要混合 FP16
+时先用 ModelOpt AutoCast（`pip install nvidia-modelopt`），或在
+`trt_build.py`/`trt_infer.py` 加 `--autocast-fp16`。TRT < 10.12（docker 目标
+10.9.0.34）自动回退显式 batch 弱类型，`--fp16` 照常生效（版本在构建时探测）。
 
 `launch/env.sh` 可覆盖：`PY`（conda python）、`CUDA_HOME`、`NGPU`（多卡
 torchrun）等环境变量。
