@@ -86,16 +86,81 @@ def _autocast_onnx_fp16(onnx_path, out_path):
     return True
 
 
-def build_engine(onnx_path, engine_path, fp16=False, autocast_fp16=False,
-                 workspace=2 << 30):
-    """ONNX -> TensorRT engine (static shapes).
+def _find_trtexec():
+    """trtexec lookup: $TRTEXEC env, then PATH. None when unavailable."""
+    exe = os.environ.get("TRTEXEC")
+    if exe:
+        return exe
+    return shutil.which("trtexec")
 
-    fp16 is honored differently by the two typing modes:
-      weak  (TRT < 10.12): BuilderFlag.FP16 (probed; absent -> FP32 fallback).
-      strong (TRT >= 10.12): the flag no longer exists; with autocast_fp16 the
-      ONNX is AutoCast'd to mixed FP16 first, otherwise the ONNX's own
-      precision is built as-is (FP32 ONNX -> FP32 engine).
+
+_TRTEXEC_STRONG_CACHE = {}
+
+
+def _trtexec_supports_strongly_typed(exe):
+    """Probe `trtexec --help` for --stronglyTyped (TRT >= 10.12).
+
+    On any probe failure we conservatively assume strong typing: adding
+    --fp16 to an 11.x trtexec fails outright, whereas omitting it on 10.x
+    only yields an FP32 engine (never a hard error).
     """
+    if exe in _TRTEXEC_STRONG_CACHE:
+        return _TRTEXEC_STRONG_CACHE[exe]
+    try:
+        proc = subprocess.run([exe, "--help"], capture_output=True,
+                              text=True, timeout=60)
+        text = (proc.stdout or "") + (proc.stderr or "")
+        strong = "stronglyTyped" in text
+    except (OSError, subprocess.TimeoutExpired):
+        strong = True
+    _TRTEXEC_STRONG_CACHE[exe] = strong
+    return strong
+
+
+def _build_engine_trtexec(exe, onnx_path, engine_path, fp16, autocast_fp16):
+    """ONNX -> engine via trtexec CLI (the standard conversion path)."""
+    os.makedirs(osp.dirname(osp.abspath(engine_path)), exist_ok=True)
+    strong = _trtexec_supports_strongly_typed(exe)
+    src = onnx_path
+    tmp_dir = None
+    if fp16 and strong:
+        if autocast_fp16:
+            tmp_dir = tempfile.mkdtemp(prefix="trt_autocast_")
+            conv = osp.join(tmp_dir, osp.basename(onnx_path)
+                            .replace(".onnx", ".fp16.onnx"))
+            if _autocast_onnx_fp16(onnx_path, conv):
+                src = conv
+                print(f"[trt] AutoCast FP16 ONNX -> {conv}")
+            else:
+                print("[trt] WARNING: nvidia-modelopt not installed; cannot "
+                      "AutoCast to FP16. `pip install nvidia-modelopt` or drop "
+                      "--fp16 to build FP32 from the FP32 ONNX.")
+        else:
+            print("[trt] strong typing: precision comes from the ONNX graph "
+                  "(FP32 ONNX -> FP32 engine). Use --autocast-fp16 for a "
+                  "mixed-FP16 engine (requires nvidia-modelopt).")
+
+    cmd = [exe, f"--onnx={osp.abspath(src)}",
+           f"--saveEngine={osp.abspath(engine_path)}"]
+    if fp16 and not strong:
+        cmd.append("--fp16")
+    print("[trt] " + " ".join(cmd))
+    # Run in a scratch dir so trtexec's extra output files never pollute CWD.
+    workdir = tempfile.mkdtemp(prefix="trt_engine_")
+    try:
+        proc = subprocess.run(cmd, cwd=workdir, text=True,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+    if proc.returncode != 0:
+        tail = "\n".join(proc.stdout.splitlines()[-40:])
+        raise RuntimeError(f"trtexec failed for {src}\n--- tail ---\n{tail}")
+    print(f"[trt] built {engine_path} (trtexec, fp16={fp16}, strong={strong})")
+
+
+def _build_engine_python(onnx_path, engine_path, fp16, autocast_fp16, workspace):
+    """Fallback: Python builder API (no trtexec binary, e.g. pip-only wheels)."""
     import tensorrt as trt
 
     logger = trt.Logger(trt.Logger.WARNING)
@@ -109,7 +174,8 @@ def build_engine(onnx_path, engine_path, fp16=False, autocast_fp16=False,
     if fp16 and mode == "strong":
         if autocast_fp16:
             tmp_dir = tempfile.mkdtemp(prefix="trt_autocast_")
-            conv = osp.join(tmp_dir, osp.basename(onnx_path).replace(".onnx", ".fp16.onnx"))
+            conv = osp.join(tmp_dir, osp.basename(onnx_path)
+                            .replace(".onnx", ".fp16.onnx"))
             if _autocast_onnx_fp16(onnx_path, conv):
                 src = conv
                 print(f"[trt] AutoCast FP16 ONNX -> {conv}")
@@ -148,9 +214,33 @@ def build_engine(onnx_path, engine_path, fp16=False, autocast_fp16=False,
     os.makedirs(osp.dirname(engine_path), exist_ok=True)
     with open(engine_path, "wb") as f:
         f.write(serialized)
-    print(f"[trt] built {engine_path} (fp16={fp16}, typing={mode})")
+    print(f"[trt] built {engine_path} (python builder, fp16={fp16}, "
+          f"typing={mode})")
     if tmp_dir:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def build_engine(onnx_path, engine_path, fp16=False, autocast_fp16=False,
+                 workspace=2 << 30):
+    """ONNX -> TensorRT engine (static shapes).
+
+    Preferred path: the trtexec CLI (consistent with launch/perf_trt.sh),
+    resolved from $TRTEXEC or PATH. Falls back to the Python builder API
+    when no trtexec binary exists (pip-only tensorrt wheels). fp16 semantics
+    by trtexec generation:
+      - TRT >= 10.12 strong typing: --fp16 is removed; precision comes from
+        the ONNX (--autocast-fp16 ModelOpt-AutoCasts first, needs
+        nvidia-modelopt; otherwise FP32 ONNX -> FP32 engine).
+      - TRT < 10.12 (10.9 docker target): --fp16 applies weak-typing FP16.
+    """
+    exe = _find_trtexec()
+    if exe is not None:
+        return _build_engine_trtexec(exe, onnx_path, engine_path, fp16,
+                                     autocast_fp16)
+    print("[trt] trtexec not found (set TRTEXEC=/path/to/bin/trtexec to use "
+          "the CLI); falling back to the Python builder API")
+    return _build_engine_python(onnx_path, engine_path, fp16, autocast_fp16,
+                                workspace)
 
 
 class TRTEngine:

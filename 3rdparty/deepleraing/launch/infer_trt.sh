@@ -2,6 +2,8 @@
 # usage: launch/infer_trt.sh <det|seg> [checkpoint] [extra args...]
 # Builds (--build, optional --fp16) + runs TRT engines on a val sample.
 # Requires export.sh to have produced outputs/onnx/*.onnx first.
+# ONNX -> engine uses trtexec (see deploy/trt_common.py): set
+# TRTEXEC=/path/to/bin/trtexec when the conda env is pip-only (no trtexec).
 set -e
 cd "$(dirname "$0")/.."
 source launch/env.sh

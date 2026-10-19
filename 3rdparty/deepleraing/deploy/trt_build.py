@@ -4,6 +4,11 @@ Usage:
   python deploy/trt_build.py --task det --onnx_dir outputs/onnx \
       --engine_dir outputs/trt [--fp16] [--autocast-fp16]
 
+ONNX -> engine conversion uses the trtexec CLI by default (lookup: $TRTEXEC
+env, then PATH — same convention as launch/perf_trt.sh). When no trtexec
+binary exists (pip-only tensorrt wheels) it falls back to the Python builder
+API.
+
 Notes:
   - Strong typing (TRT >= 10.12 / 11.x): precision comes from the ONNX; an
     FP32 ONNX builds an FP32 engine. Use --autocast-fp16 (needs
