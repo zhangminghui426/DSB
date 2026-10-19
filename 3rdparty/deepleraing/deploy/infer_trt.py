@@ -175,7 +175,7 @@ def run_trt(model, engines, batch, task, stream=None):
         depthnet = engines["camera.vtransform"].run({"feats": feats})["depthnet"]
 
     # camera geometry + bev_pool + downsample (torch/CUDA, not in graph)
-    cam_bev = camera_bev_from_depthnet(model, batch, depthnet, task, feats=feats)
+    cam_bev = camera_bev_from_depthnet(model, batch, depthnet, task)
 
     # lidar branch (torch/spconv, weights from checkpoint)
     lidar_bev = LidarBranchEncoder(model)([batch["points"][0]], use_fp16=False)
