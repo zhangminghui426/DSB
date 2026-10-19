@@ -1,7 +1,8 @@
 """TensorRT build/runtime helpers shared by deploy/trt_build.py and
 deploy/trt_infer.py.
 
-ONNX -> engine conversion runs the trtexec CLI only (no Python builder API):
+ONNX -> engine conversion runs the trtexec CLI only (no Python builder API),
+invoked from Python as a shell command string:
   trtexec --onnx=<onnx> --saveEngine=<engine> [--fp16]
 
 Strong-typing migration (NVIDIA trt-strong-typing-migration):
@@ -16,6 +17,7 @@ Strong-typing migration (NVIDIA trt-strong-typing-migration):
 
 import os
 import os.path as osp
+import shlex
 import shutil
 import subprocess
 import sys
@@ -103,7 +105,7 @@ def _trtexec_supports_strongly_typed(exe):
 
 
 def _build_engine_trtexec(exe, onnx_path, engine_path, fp16, autocast_fp16):
-    """ONNX -> engine via trtexec CLI (the standard conversion path)."""
+    """ONNX -> engine via the trtexec CLI, run as a shell command string."""
     os.makedirs(osp.dirname(osp.abspath(engine_path)), exist_ok=True)
     strong = _trtexec_supports_strongly_typed(exe)
     src = onnx_path
@@ -125,15 +127,17 @@ def _build_engine_trtexec(exe, onnx_path, engine_path, fp16, autocast_fp16):
                   "(FP32 ONNX -> FP32 engine). Use --autocast-fp16 for a "
                   "mixed-FP16 engine (requires nvidia-modelopt).")
 
-    cmd = [exe, f"--onnx={osp.abspath(src)}",
-           f"--saveEngine={osp.abspath(engine_path)}"]
+    # Invoke trtexec as a shell command line (the standard trtexec form).
+    cmd = (f"{shlex.quote(exe)} "
+           f"--onnx={shlex.quote(osp.abspath(src))} "
+           f"--saveEngine={shlex.quote(osp.abspath(engine_path))}")
     if fp16 and not strong:
-        cmd.append("--fp16")
-    print("[trt] " + " ".join(cmd))
+        cmd += " --fp16"
+    print("[trt] " + cmd)
     # Run in a scratch dir so trtexec's extra output files never pollute CWD.
     workdir = tempfile.mkdtemp(prefix="trt_engine_")
     try:
-        proc = subprocess.run(cmd, cwd=workdir, text=True,
+        proc = subprocess.run(cmd, cwd=workdir, shell=True, text=True,
                               stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT)
     finally:
@@ -149,6 +153,7 @@ def build_engine(onnx_path, engine_path, fp16=False, autocast_fp16=False):
 
     trtexec is resolved from $TRTEXEC or PATH; a missing binary is a hard
     error (set TRTEXEC=/path/to/bin/trtexec, e.g. a TensorRT tar package).
+    The conversion itself runs `trtexec ...` as a shell command string.
     fp16 semantics by trtexec generation:
       - TRT >= 10.12 strong typing: --fp16 is removed; precision comes from
         the ONNX (--autocast-fp16 ModelOpt-AutoCasts first, needs
