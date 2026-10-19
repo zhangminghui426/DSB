@@ -21,7 +21,7 @@ deepleraing/
 │   └── calib_board_detector/  # 标定板检测器（SECOND）
 ├── datasets/          # 数据集与数据处理
 ├── scripts/           # 训练/评估/测试脚本（仅 .py）
-├── deploy/            # 导出/构建/推理包（exporter/builder/runtime/inferencer/config/graphs + bev_pool/lidar/preprocess）
+├── deploy/            # 导出/构建/推理包（export/builder/runtime/inferencer/config/graphs + bev_pool/lidar/preprocess）
 ├── launch/            # shell 启动脚本（train/eval/export/infer_trt/perf_trt/visualize）
 ├── configs/           # 训练与部署配置
 ├── ops/               # 自定义 CUDA 算子（bev_pool_v2 / voxel / iou3d）
@@ -47,7 +47,7 @@ python setup.py build_ext --inplace
 ## 数据准备
 
 ```bash
-# 软链接 nuScenes 数据目录（配置中 dataset_root="data/nuscenes/",
+# 软链接 nuScenes 数据目录（配置中 dataset_root="data/nuscenes/"，
 # 需要 nuscenes_infos_train.pkl / nuscenes_infos_val.pkl / nuscenes_dbinfos_train.pkl）
 ln -s /path/to/nuscenes data/nuscenes
 ```
@@ -78,16 +78,13 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 | `head.bbox/map.onnx` | decoder_feat → 8 个 pred / masks | 不解码，decode 留在 torch |
 
 ```bash
-# 1. 导出 ONNX（--verify 用 onnxruntime 逐图校验，需 pip install onnx onnxruntime）
-python deploy/exporter.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task det --verify
+# 1. 导出 ONNX 并构建 TRT engine（一步完成；--verify 用 onnxruntime 逐图校验，
+#    需 pip install onnx onnxruntime；engine 构建只走 trtexec CLI，$TRTEXEC 或
+#    PATH，pip-only tensorrt 无 trtexec 时需 TRTEXEC=/path/to/TensorRT-10.9.../bin/trtexec）
+python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+    --task det --verify --fp16
 
-# 2. 构建 TRT engine（缓存到 outputs/trt/；ONNX->engine 只走 trtexec CLI：
-#    $TRTEXEC 或 PATH；pip-only tensorrt 无 trtexec，需
-#    TRTEXEC=/path/to/TensorRT-10.9.../bin/trtexec）
-python deploy/inferencer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-    --engine_dir outputs/trt --build --fp16 --verify
-
-# 3. 保存解码结果
+# 2. 保存解码结果
 python deploy/inferencer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```

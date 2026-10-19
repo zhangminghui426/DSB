@@ -1,6 +1,6 @@
 #pragma once
 // End-to-end C++ inference pipeline (pipeline.cpp): init / load / infer /
-// verify / dump, matching deploy/exporter.py + deploy/inferencer.py.
+// verify / dump, matching deploy/export.py + deploy/inferencer.py.
 
 #include "dsb_infer/config.hpp"
 #include "dsb_infer/ops.hpp"

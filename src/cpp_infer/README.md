@@ -1,6 +1,6 @@
 # DSB C++ Inference (det)
 
-纯 C++ 推理流水线（`src/cpp_infer/`），与 `deploy/exporter.py` 分模块导出的
+纯 C++ 推理流水线（`src/cpp_infer/`），与 `deploy/export.py` 分模块导出的
 4 个 TensorRT engine 衔接，在 C++/CUDA 侧完成 torch runtime 部分
 （相机预处理与深度投影、几何与 bev_pool、体素化与稀疏卷积、bbox 解码），
 整链路不依赖 Python。
@@ -28,25 +28,6 @@ points (N,5)
 - 解码：与 `TransFusionHead.get_bboxes`（`nms_type=None`）+
   `TransFusionBBoxCoder.decode` 一致：dense heatmap NMS(3×3) → 全类别 top-200
   proposals → one-hot 打分 → 中心/尺寸/朝向/速度反算 → `post_center_range` 过滤。
-
-## 代码结构
-
-```
-src/cpp_infer/
-├── include/dsb_infer/
-│   ├── tensor.hpp        # Tensor / Mat3 / Mat4 / 二进制 IO
-│   ├── config.hpp        # Config（几何/结构/decode 参数）+ load_config
-│   ├── ops.hpp           # CPU 算子声明（project_depth/geometry/bev_pool/.../decode_det）
-│   ├── trt_engine.hpp    # TrtEngine（engine 反序列化 + 执行）
-│   └── pipeline.hpp      # InferencePipeline（整条推理流水线）
-└── src/
-    ├── main.cpp          # 薄 CLI（参数解析 -> pipeline）
-    ├── pipeline.cpp      # InferencePipeline：load_engines/load_weights/infer/verify/dump
-    ├── trt_engine.cpp    # TrtEngine 实现（CUDA 缓冲 + async v3）
-    ├── ops.cpp           # project_depth / compute_geometry / bev_pool / downsample / voxelize
-    ├── sparse_conv.cpp   # SparseEncoder CPU 参考实现
-    └── decode.cpp        # TransFusion decode + NMS
-```
 
 ## 依赖与编译（用户机器）
 

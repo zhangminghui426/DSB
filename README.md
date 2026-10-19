@@ -31,7 +31,7 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 │   │   │   └── calib_board_detector/ # 标定板检测器（SECOND）
 │   │   ├── datasets/       # 数据集和数据处理
 │   │   ├── scripts/        # 训练、测试、导出、可视化脚本（仅 .py）
-│   │   ├── deploy/         # 导出/构建/推理包（exporter/builder/runtime/inferencer/config/graphs + bev_pool/lidar/preprocess）
+│   │   ├── deploy/         # 导出/构建/推理包（export/builder/runtime/inferencer/config/graphs + bev_pool/lidar/preprocess）
 │   │   ├── launch/         # shell 启动脚本（train/eval/export/infer_trt/perf_trt/visualize）
 │   │   ├── configs/        # 配置文件
 │   │   ├── ops/            # 自定义 CUDA 算子
@@ -103,7 +103,7 @@ python setup.py build_ext --inplace
 ```bash
 cd 3rdparty/deepleraing
 
-# 1. 准备数据：软链接 nuScenes 数据目录（配置中 dataset_root="data/nuscenes/",
+# 1. 准备数据：软链接 nuScenes 数据目录（配置中 dataset_root="data/nuscenes/"，
 #    需要 nuscenes_infos_train.pkl / nuscenes_infos_val.pkl / nuscenes_dbinfos_train.pkl）
 ln -s /path/to/nuscenes data/nuscenes
 
@@ -139,17 +139,14 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 ```bash
 cd 3rdparty/deepleraing
 
-# 1. 导出 ONNX（--verify 用 onnxruntime 逐图校验，需 pip install onnx onnxruntime）
-python deploy/exporter.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task det --verify
+# 1. 导出 ONNX 并构建 TRT engine（一步完成；--verify 用 onnxruntime 逐图校验，
+#    需 pip install onnx onnxruntime；engine 构建只走 trtexec CLI，$TRTEXEC 或
+#    PATH，pip-only tensorrt 无 trtexec 时需 TRTEXEC=/path/to/TensorRT-10.9.../bin/trtexec。
+#    TRT >= 10.12 强类型下 FP32 ONNX 出 FP32 engine，--fp16 需配合 --autocast-fp16）
+python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+    --task det --verify --fp16
 
-# 2. 构建 TRT engine（缓存到 outputs/trt/；ONNX->engine 只走 trtexec CLI：
-#    $TRTEXEC 或 PATH；pip-only tensorrt 无 trtexec，需
-#    TRTEXEC=/path/to/TensorRT-10.9.../bin/trtexec。TRT >= 10.12 强类型下
-#    FP32 ONNX 出 FP32 engine，--fp16 需配合 --autocast-fp16，见 deploy/builder.py）
-python deploy/inferencer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-    --engine_dir outputs/trt --build --fp16 --verify
-
-# 3. 保存解码结果
+# 2. 保存解码结果
 python deploy/inferencer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```

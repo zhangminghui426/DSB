@@ -1,5 +1,5 @@
 // InferencePipeline implementation. Pipeline (batch=1), mirrors
-// deploy/exporter.py + deploy/inferencer.py + models/* at det config:
+// deploy/export.py + deploy/inferencer.py + models/* at det config:
 //   img -> [TRT camera.backbone] -> feats
 //       -> depth (project_depth, CPU) -> [TRT camera.vtransform] -> depthnet
 //       -> softmax depth × feats -> geometry + bev_pool (CPU)
