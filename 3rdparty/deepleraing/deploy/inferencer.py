@@ -13,7 +13,7 @@ Pipeline (det):
   -> torch geometry/bev_pool   (camera_bev_from_depthnet) -> cam_bev (1,80,180,180)
   -> torch voxelize+spconv     (LidarBranchEncoder)       -> lidar_bev (1,256,180,180)
   -> fuser.engine              cam_bev + lidar_bev        -> decoder_feat (1,512,180,180)
-  -> head.bbox.engine          decoder_feat               -> 8 pred tensors
+  -> head.bbox.engine          decoder_feat               -> 9 pred tensors (incl. query_labels)
   -> TransFusionHead.get_bboxes (decode + NMS)
 
 Usage:
@@ -52,8 +52,8 @@ class DetInferencer:
     def infer(self, batch):
         """Full TRT pipeline for one collated batch (B=1).
 
-        Returns (preds, decoder_feat): for det, preds is the 8-key dict from
-        head.bbox; for seg, preds is the masks tensor.
+        Returns (preds, decoder_feat): for det, preds is the 9-key dict from
+        head.bbox (8 preds + query_labels); for seg, preds is the masks tensor.
         """
         from deploy.bev_pool_torch import camera_bev_from_depthnet
         from deploy.lidar_branch import LidarBranchEncoder
@@ -99,7 +99,9 @@ class DetInferencer:
     def decode(self, preds, metas):
         """TransFusionHead decode + NMS -> (boxes, scores, labels)."""
         head = self.model.heads["object"]
-        boxes, scores, labels = head.get_bboxes(([preds],), metas)[0][0]
+        # get_bboxes returns [[boxes3d, scores, labels]] (batch of one here),
+        # so [0] is the (boxes, scores, labels) triple for the sample.
+        boxes, scores, labels = head.get_bboxes(([preds],), metas)[0]
         return boxes, scores, labels
 
     @torch.no_grad()
