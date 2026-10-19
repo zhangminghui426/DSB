@@ -23,25 +23,13 @@ void maxpool3(const Tensor &in, Tensor &out) {
           out.at({b, c, i, j}) = m;
         }
 }
-
-// top-k by value over a (B, K) array; returns indices (B, k) sorted desc.
-void topk_desc(const Tensor &vals, int k, std::vector<std::vector<int>> &out_idx) {
-  int B = (int)vals.shape[0], K = (int)vals.shape[1];
-  out_idx.assign(B, {});
-  for (int b = 0; b < B; ++b) {
-    std::vector<int> idx(K);
-    std::iota(idx.begin(), idx.end(), 0);
-    const float *row = vals.data.data() + (size_t)b * K;
-    std::partial_sort(idx.begin(), idx.begin() + k, idx.end(),
-                      [&](int a, int c) { return row[a] > row[c]; });
-    out_idx[b].assign(idx.begin(), idx.begin() + k);
-  }
-}
 }  // namespace
 
 // Mirrors TransFusionHead.get_bboxes (nms_type=None) + TransFusionBBoxCoder.decode.
 DetOutput decode_det(const Config &cfg, const std::vector<Tensor> &preds) {
-  // preds: dense_heatmap, heatmap, query_heatmap_score, center, height, dim, rot, vel
+  // preds: dense_heatmap, heatmap, query_heatmap_score, center, height, dim,
+  //        rot, vel, query_labels (float; class id per proposal, from the
+  //        in-graph topk of head.bbox).
   const Tensor &dense_hm = preds[0];
   const Tensor &prop_hm = preds[1];
   const Tensor &qhm = preds[2];
@@ -50,11 +38,11 @@ DetOutput decode_det(const Config &cfg, const std::vector<Tensor> &preds) {
   const Tensor &dim = preds[5];
   const Tensor &rot = preds[6];
   const Tensor &vel = preds[7];
+  const Tensor &ql = preds[8];
 
   int B = (int)prop_hm.shape[0];
   int ncls = (int)prop_hm.shape[1];
   int nprop = (int)prop_hm.shape[2];
-  int bev = cfg.head_bev;  // H*W per class
 
   // ---- NMS on dense heatmap (kernel 3, stride 1) -----------------------
   Tensor hm(dense_hm.shape);
@@ -74,19 +62,12 @@ DetOutput decode_det(const Config &cfg, const std::vector<Tensor> &preds) {
           hm.at({b, c, i, j}) = (v == lm) ? v : 0.0f;
         }
 
-  // ---- top-k proposals among all classes --------------------------------
-  Tensor flat({B, (int64_t)ncls * bev});
-  for (int b = 0; b < B; ++b)
-    for (int c = 0; c < ncls; ++c)
-      for (int p = 0; p < bev; ++p)
-        flat.data[b * flat.shape[1] + c * bev + p] = hm.at({b, c, p / W, p % W});
-  std::vector<std::vector<int>> top_idx;
-  topk_desc(flat, cfg.head_nprop, top_idx);
-  // query_labels (B, nprop): class = idx / bev
+  // ---- query_labels from the engine (same in-graph topk as
+  // query_heatmap_score) ------------------------------------------------
   std::vector<std::vector<int>> query_labels(B, std::vector<int>(nprop));
   for (int b = 0; b < B; ++b)
     for (int j = 0; j < nprop; ++j)
-      query_labels[b][j] = top_idx[b][j] / bev;
+      query_labels[b][j] = (int)std::lround(ql.at({b, j}));
 
   // ---- batch score = heatmap.sigmoid() * qhm * one_hot ------------------
   // (B, ncls, nprop)
