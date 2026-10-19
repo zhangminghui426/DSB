@@ -20,6 +20,23 @@ def boxes_iou_bev(boxes_a, boxes_b):
     return ans_iou
 
 
+def boxes_overlap_bev(boxes_a, boxes_b):
+    """Calculate BEV overlap of two box sets (XYXYR format).
+
+    Args:
+        boxes_a (torch.Tensor): (M, 5) [x1, y1, x2, y2, ry].
+        boxes_b (torch.Tensor): (N, 5) [x1, y1, x2, y2, ry].
+
+    Returns:
+        torch.Tensor: (M, N) intersection areas.
+    """
+    ans_overlap = boxes_a.new_zeros(torch.Size((boxes_a.shape[0], boxes_b.shape[0])))
+    iou3d_cuda.boxes_overlap_bev_gpu(
+        boxes_a.contiguous(), boxes_b.contiguous(), ans_overlap
+    )
+    return ans_overlap
+
+
 def nms_gpu(boxes, scores, thresh, pre_maxsize=None, post_max_size=None):
     """Nms function with gpu implementation.
 
