@@ -10,7 +10,7 @@ import numpy as np
 
 _THIS_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _THIS_DIR.parent.parent.parent
-_CALIB_BOARD_DIR = _PROJECT_ROOT / "3rdparty" / "deepleraing" / "models" / "calib_board_detector"
+_CALIB_BOARD_DIR = _PROJECT_ROOT / "3rdparty" / "deeplearning" / "models" / "calib_board_detector"
 if str(_CALIB_BOARD_DIR) not in sys.path:
     sys.path.insert(0, str(_CALIB_BOARD_DIR))
 

@@ -2,7 +2,7 @@
 
 预留目录：后续 ROS2 集成代码（节点、launch 文件、接口封装）。
 
-TRT 推理工程代码位于 `3rdparty/deepleraing/deploy/`（与模型库同属深度学习范畴）：
+TRT 推理工程代码位于 `3rdparty/deeplearning/deploy/`（与模型库同属深度学习范畴）：
 
 - `deploy/python/` — Python 部署包（deploy.python，三层：preprocess/inference/postprocess）
 - `deploy/cpp/` — C++ 推理（dsb_infer，三层 + ops）

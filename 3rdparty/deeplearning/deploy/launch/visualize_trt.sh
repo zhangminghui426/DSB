@@ -5,8 +5,8 @@
 #   sample{N}-{M}_seq.gif        temporal sequence gif (--frames N)
 # Reuse a previous dump with: --npz outputs/trt/sample5.npz
 set -e
-HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deepleraing/deploy/launch
-DL="$(cd "$HERE/../.." && pwd)"                  # 3rdparty/deepleraing（模型库根）
+HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deeplearning/deploy/launch
+DL="$(cd "$HERE/../.." && pwd)"                  # 3rdparty/deeplearning（模型库根）
 cd "$DL"
 source "$HERE/env.sh"
 CFG=configs/det_convfuser.py

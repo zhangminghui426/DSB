@@ -11,7 +11,7 @@ sparse encoder (deploy.python.inference.sparse_encoder_forward), box decode
 ONNX export is immediately followed by the trtexec engine build for every
 graph (skip with --onnx-only). trtexec lookup: $TRTEXEC env, then PATH.
 
-Usage (run from the model repo root 3rdparty/deepleraing):
+Usage (run from the model repo root 3rdparty/deeplearning):
   python deploy/python/export.py CONFIG CHECKPOINT --task det --verify --fp16
 """
 
@@ -20,7 +20,7 @@ import os
 import os.path as osp
 import sys
 
-# deepleraing 根（上 3 级）：models/datasets/scripts 与 deploy.python 包都在其下
+# deeplearning 根（上 3 级）：models/datasets/scripts 与 deploy.python 包都在其下
 _DL_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))
 sys.path.insert(0, _DL_ROOT)
 

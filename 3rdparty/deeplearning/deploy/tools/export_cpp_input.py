@@ -24,7 +24,7 @@ import os
 import os.path as osp
 import sys
 
-# 本脚本位于 3rdparty/deepleraing/deploy/tools/：上两级即模型库根，
+# 本脚本位于 3rdparty/deeplearning/deploy/tools/：上两级即模型库根，
 # datasets/models/scripts/configs 均在其下；允许从仓库根以裸相对路径
 # （如 configs/det_convfuser.py）运行。
 _DL_ROOT = osp.join(osp.dirname(osp.abspath(__file__)), "..", "..")
@@ -155,13 +155,13 @@ def main():
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
-    # resolve bare repo-root relative paths against 3rdparty/deepleraing
+    # resolve bare repo-root relative paths against 3rdparty/deeplearning
     def resolve(p):
         return p if osp.exists(p) else osp.join(_DL_ROOT, p)
 
     cfg = load_config(resolve(args.config))
 
-    # rebase bare relative data paths onto 3rdparty/deepleraing
+    # rebase bare relative data paths onto 3rdparty/deeplearning
     def rebase(p):
         return p if (not p or osp.isabs(p) or osp.exists(p)) else \
             osp.join(_DL_ROOT, p)

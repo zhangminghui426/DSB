@@ -2,11 +2,11 @@
 # usage: deploy/launch/export.sh <det|seg> [checkpoint] [extra args...]
 # Exports the 4 module graphs to ONNX, then builds the TRT engines
 # (trtexec CLI) in one step. Pass --onnx-only for ONNX only.
-# Runs with the model repo (3rdparty/deepleraing) as CWD so
+# Runs with the model repo (3rdparty/deeplearning) as CWD so
 # configs/ ckpts/ outputs/ relative paths keep working.
 set -e
-HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deepleraing/deploy/launch
-DL="$(cd "$HERE/../.." && pwd)"                  # 3rdparty/deepleraing（模型库根）
+HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deeplearning/deploy/launch
+DL="$(cd "$HERE/../.." && pwd)"                  # 3rdparty/deeplearning（模型库根）
 cd "$DL"
 source "$HERE/env.sh"
 TASK="${1:?task: det|seg}"; shift || true

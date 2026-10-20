@@ -6,12 +6,12 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 
 | 模块 | 位置 | 说明 |
 |---|---|---|
-| BEV 感知 | `3rdparty/deepleraing/` | BEVFusion + FlashOCC 重写，纯 PyTorch，零 mmcv 依赖 |
-| 标定板检测器 | `3rdparty/deepleraing/models/calib_board_detector/` | SECOND 3D 目标检测，用于自动检测标定板 |
+| BEV 感知 | `3rdparty/deeplearning/` | BEVFusion + FlashOCC 重写，纯 PyTorch，零 mmcv 依赖 |
+| 标定板检测器 | `3rdparty/deeplearning/models/calib_board_detector/` | SECOND 3D 目标检测，用于自动检测标定板 |
 | 雷达-相机标定 | `3rdparty/fast_calib/` | 激光雷达与鱼眼相机外参标定算法 |
 | Streamlit UI | `app/` | 可视化界面，支持上传 mcap、运行标定、3D 预览 |
-| TRT 推理 | `3rdparty/deepleraing/deploy/` | Python 部署包（deploy.python）+ C++ 推理 + 推理工具 + 启动脚本（与模型库同属深度学习范畴） |
-| 工程代码 | `src/` | 后续 ROS2 集成代码（推理代码已迁至 `3rdparty/deepleraing/deploy/`） |
+| TRT 推理 | `3rdparty/deeplearning/deploy/` | Python 部署包（deploy.python）+ C++ 推理 + 推理工具 + 启动脚本（与模型库同属深度学习范畴） |
+| 工程代码 | `src/` | 后续 ROS2 集成代码（推理代码已迁至 `3rdparty/deeplearning/deploy/`） |
 
 ## 目录结构
 
@@ -19,9 +19,9 @@ BEV 感知 + 雷达-相机外参标定的统一项目，整合了 BEVFusion、Fl
 项目根目录/
 ├── app/                    # Streamlit UI
 │   └── app.py              # 主界面
-├── src/                    # 工程代码（ROS2 集成，推理代码已迁至 3rdparty/deepleraing/deploy/）
+├── src/                    # 工程代码（ROS2 集成，推理代码已迁至 3rdparty/deeplearning/deploy/）
 ├── 3rdparty/
-│   ├── deepleraing/       # 深度学习模型库
+│   ├── deeplearning/       # 深度学习模型库
 │   │   ├── models/         # 模型定义
 │   │   │   ├── backbones/  # swin, resnet, second, sparse_encoder
 │   │   │   ├── necks/      # glss, second, custom_fpn
@@ -75,7 +75,7 @@ docker run --gpus all -it --rm \
     dsb:latest
 
 # 容器内已自动激活 DSB conda 环境，直接编译算子
-cd 3rdparty/deepleraing
+cd 3rdparty/deeplearning
 python setup.py build_ext --inplace
 ```
 
@@ -99,14 +99,14 @@ pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
 pip install -r requirements.txt
 
 # 编译 CUDA 算子
-cd 3rdparty/deepleraing
+cd 3rdparty/deeplearning
 python setup.py build_ext --inplace
 ```
 
 ### 训练 BEV 感知模型（BEVFusion 检测）
 
 ```bash
-cd 3rdparty/deepleraing
+cd 3rdparty/deeplearning
 
 # 1. 准备数据：软链接 nuScenes 数据目录（配置中 dataset_root="data/nuscenes/"，
 #    需要 nuscenes_infos_train.pkl / nuscenes_infos_val.pkl / nuscenes_dbinfos_train.pkl）
@@ -142,7 +142,7 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 | `head.bbox/map.onnx` | decoder_feat → 8 个 pred / masks | 不解码，decode 留在 torch |
 
 ```bash
-cd 3rdparty/deepleraing
+cd 3rdparty/deeplearning
 
 # 1. 导出 ONNX 并构建 TRT engine（一步完成；--verify 用 onnxruntime 逐图校验，
 #    需 pip install onnx onnxruntime；engine 构建只走 trtexec CLI，$TRTEXEC 或
@@ -156,31 +156,31 @@ python deploy/python/pipeline.py configs/det_convfuser.py ckpts/bevfusion-det-bf
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```
 
-### C++ 推理（3rdparty/deepleraing/deploy/cpp）
+### C++ 推理（3rdparty/deeplearning/deploy/cpp）
 
 纯 C++ 推理流水线（无 Python）：4 个 TRT engine + C++ 侧 torch runtime
 （相机深度投影、几何与 bev_pool、体素化 + 稀疏卷积、bbox 解码），
 支持 `batch=1` 静态形状，解码结果与 torch 参考一致。结构与 Python 侧对应：
 `preprocess/`（预处理）、`inference/`（推理）、`postprocess/`（后处理）、
-`ops/`（自定义 CPU 算子，对应 `3rdparty/deepleraing/ops/` 参考定义）。
+`ops/`（自定义 CPU 算子，对应 `3rdparty/deeplearning/ops/` 参考定义）。
 
-详见 [`3rdparty/deepleraing/deploy/cpp/README.md`](3rdparty/deepleraing/deploy/cpp/README.md)：
+详见 [`3rdparty/deeplearning/deploy/cpp/README.md`](3rdparty/deeplearning/deploy/cpp/README.md)：
 流水线图、输入导出、编译运行、工程内核对口与已知限制。
 
 ### launch 启动脚本
 
-模型库训练/评估脚本在 `3rdparty/deepleraing/launch/`，TRT 推理部署脚本在
-`3rdparty/deepleraing/deploy/launch/`（均以 `deepleraing` 为工作目录，
+模型库训练/评估脚本在 `3rdparty/deeplearning/launch/`，TRT 推理部署脚本在
+`3rdparty/deeplearning/deploy/launch/`（均以 `deeplearning` 为工作目录，
 configs/ckpts/outputs 相对路径保持不变）：
 
 ```bash
-# 模型库（cd 3rdparty/deepleraing）
+# 模型库（cd 3rdparty/deeplearning）
 launch/prepare_data.sh            # 数据软链接 + infos pkl 生成
 launch/train.sh det               # 训练（det|seg|multitask|occ|m0|stereo|stbase）
 launch/eval.sh det                # 评估
 launch/visualize.sh det           # 可视化
 
-# TRT 推理部署（cd 3rdparty/deepleraing）
+# TRT 推理部署（cd 3rdparty/deeplearning）
 bash deploy/launch/export.sh det              # 导出 ONNX
 bash deploy/launch/infer_trt.sh det           # TRT 推理（加 --build --fp16 --verify 透传）
 bash deploy/launch/visualize_trt.sh det       # TRT 推理结果可视化（jpg/gif）
@@ -192,7 +192,7 @@ bash deploy/launch/perf_trt.sh det            # trtexec 采集逐层 profile -> 
 ```bash
 # 1. 采集（需 GPU + trtexec；pip-only tensorrt 无 trtexec 时用
 #    TRTEXEC 指向 tar 包 bin/trtexec：TRTEXEC=.../bin/trtexec bash deploy/launch/perf_trt.sh det）
-cd 3rdparty/deepleraing
+cd 3rdparty/deeplearning
 bash deploy/launch/perf_trt.sh det             # -> outputs/perf/layers_*.json + profile_*.json
 # 2. 生成交互式 HTML 报告（首次运行自动从 NVIDIA/TensorRT 官方仓库拉取
 #    report_template 的 app.js / netron-assets.js 大文件）-> outputs/perf/report/
@@ -221,7 +221,7 @@ streamlit run app/app.py
 ### 训练标定板检测器
 
 ```bash
-cd 3rdparty/deepleraing/models/calib_board_detector
+cd 3rdparty/deeplearning/models/calib_board_detector
 python train.py
 ```
 

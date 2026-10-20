@@ -10,8 +10,8 @@
 # locations (TensorRT-10.9 tar bin/). pip-only tensorrt wheels have no
 # trtexec binary — point TRTEXEC at the tar package's bin/trtexec.
 set -e
-HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deepleraing/deploy/launch
-DL="$(cd "$HERE/../.." && pwd)"                  # 3rdparty/deepleraing（模型库根）
+HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deeplearning/deploy/launch
+DL="$(cd "$HERE/../.." && pwd)"                  # 3rdparty/deeplearning（模型库根）
 cd "$DL"
 source "$HERE/env.sh"
 TASK="${1:?task: det|seg}"

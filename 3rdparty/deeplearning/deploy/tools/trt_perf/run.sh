@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # usage: bash deploy/tools/trt_perf/run.sh [PERF_DIR]
-#   PERF_DIR  default: 3rdparty/deepleraing/outputs/perf
+#   PERF_DIR  default: 3rdparty/deeplearning/outputs/perf
 #   MODEL_NAME env (default bevfusion-det) passed to the report.
 # Wraps the NVIDIA trt-perf-analysis pipeline:
 #   analyze_trt_perf.py -> validate_analyze_data.py --require-passed
@@ -9,10 +9,10 @@
 # (collect them with deploy/launch/perf_trt.sh).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# 本目录位于 3rdparty/deepleraing/deploy/tools/trt_perf/，上 5 级为仓库根
+# 本目录位于 3rdparty/deeplearning/deploy/tools/trt_perf/，上 5 级为仓库根
 REPO_ROOT="$(cd "$HERE/../../../.." && pwd)"
 # Resolve PERF_DIR against the repo root so the script works from any CWD.
-PERF_DIR="${1:-$REPO_ROOT/3rdparty/deepleraing/outputs/perf}"
+PERF_DIR="${1:-$REPO_ROOT/3rdparty/deeplearning/outputs/perf}"
 case "$PERF_DIR" in
   /*) ;;
   *) PERF_DIR="$REPO_ROOT/$PERF_DIR" ;;

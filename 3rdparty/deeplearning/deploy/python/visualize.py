@@ -9,7 +9,7 @@ outputs/vis/, kept separate from the model/ckpt tree):
 
 Rendering reuses scripts/render.py (same drawing as scripts/visualize.py).
 
-Usage (run from the model repo root 3rdparty/deepleraing):
+Usage (run from the model repo root 3rdparty/deeplearning):
   python deploy/python/visualize.py CONFIG CKPT --engine_dir outputs/trt \
       --sample-index 5 --frames 1 [--stride 1] \
       [--npz outputs/trt/sample5.npz] \
@@ -21,7 +21,7 @@ import os
 import os.path as osp
 import sys
 
-# deepleraing 根（上 3 级）：models/datasets/scripts 与 deploy.python 包都在其下
+# deeplearning 根（上 3 级）：models/datasets/scripts 与 deploy.python 包都在其下
 _DL_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))
 sys.path.insert(0, _DL_ROOT)
 

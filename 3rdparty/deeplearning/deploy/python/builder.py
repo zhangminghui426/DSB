@@ -3,7 +3,7 @@
 Runs the trtexec CLI only — no Python builder API. The trtexec binary is
 resolved from $TRTEXEC (env) or PATH; a missing binary is a hard error.
 
-Usage (run from the model repo root 3rdparty/deepleraing):
+Usage (run from the model repo root 3rdparty/deeplearning):
   python deploy/python/builder.py --task det --onnx_dir outputs/onnx \
       --engine_dir outputs/trt [--graphs a,b] [--fp16] [--autocast-fp16]
 """

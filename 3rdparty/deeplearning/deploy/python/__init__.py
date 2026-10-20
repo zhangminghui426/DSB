@@ -1,6 +1,6 @@
 """Deploy package: split-module ONNX export -> trtexec engine build -> TRT infer.
 
-Entry points (each has a CLI; run from the model repo 3rdparty/deepleraing):
+Entry points (each has a CLI; run from the model repo 3rdparty/deeplearning):
   python deploy/python/export.py      CONFIG CKPT --task det [--verify]
   python deploy/python/builder.py     --task det [--fp16]
   python deploy/python/pipeline.py    CONFIG CKPT --task det [--build]

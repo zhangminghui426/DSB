@@ -1,4 +1,4 @@
-# dsb_infer（C++ 推理，3rdparty/deepleraing/deploy/cpp）
+# dsb_infer（C++ 推理，3rdparty/deeplearning/deploy/cpp）
 
 C++ 端到端推理：加载 TRT engine，复用与 `deploy/python/pipeline.py` 相同的
 图拆分（`deploy/python/graphs.py`），CPU 侧实现 camera 几何 / bev_pool /
@@ -26,20 +26,20 @@ points ──► voxelize + sparse_encoder (CPU) ──── lidar_bev (1,256,1
 
 Python 与 C++ 按同一三层结构组织（预处理 / 推理 / 后处理），C++ 推理用到的
 自定义算子集中在 `ops/`，其参考定义（Python/CUDA 实现）见
-`3rdparty/deepleraing/ops/`（bev_pool_v2 / voxel / iou3d）。
+`3rdparty/deeplearning/ops/`（bev_pool_v2 / voxel / iou3d）。
 
 | 层 | C++ 目录 / 文件 | Python 模块 | 职责 |
 | --- | --- | --- | --- |
 | 预处理 | `preprocess/`（preprocess.hpp/cpp） | `deploy/python/preprocess.py` | 加载导出输入、lidar 深度投影、点云体素化 |
 | 推理 | `inference/`（inference.hpp/cpp + trt_engine） | `deploy/python/inference.py` + bev_pool_torch | TRT engine 编排（几何/bev_pool/降采样/稀疏编码走 `ops/`） |
-| 算子 | `ops/`（ops.hpp/cpp） | `3rdparty/deepleraing/ops/`（参考） | CPU 自定义算子：bev_pool / 体素化 / 稀疏卷积 |
+| 算子 | `ops/`（ops.hpp/cpp） | `3rdparty/deeplearning/ops/`（参考） | CPU 自定义算子：bev_pool / 体素化 / 稀疏卷积 |
 | 后处理 | `postprocess/`（postprocess.hpp/cpp） | `deploy/python/postprocess.py` | 检测解码（NMS + bbox coder + 过滤） |
 | 编排 | `pipeline.hpp/cpp` | `deploy/python/pipeline.py` | 三层组合 + verify / dump |
 
 ## 构建
 
 ```bash
-cd 3rdparty/deepleraing/deploy/cpp
+cd 3rdparty/deeplearning/deploy/cpp
 mkdir -p build && cd build
 cmake .. -DTENSORRT_ROOT=/opt/TensorRT-10.9.0.34
 make -j
@@ -55,7 +55,7 @@ python deploy/tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion
 ```
 
 ```bash
-./3rdparty/deepleraing/deploy/cpp/build/dsb_infer \
+./3rdparty/deeplearning/deploy/cpp/build/dsb_infer \
     --engine-dir outputs/trt \
     --input-dir outputs/cpp_input \
     --dump-dir outputs/cpp_out
@@ -90,7 +90,7 @@ deploy/cpp/
   preprocess/preprocess.{hpp,cpp}     # 预处理层
   inference/inference.{hpp,cpp}       # 推理层
   inference/trt_engine.{hpp,cpp}      # TRT engine 加载/执行
-  ops/ops.{hpp,cpp}                   # 自定义 CPU 算子（对应 3rdparty/deepleraing/ops/ 参考）
+  ops/ops.{hpp,cpp}                   # 自定义 CPU 算子（对应 3rdparty/deeplearning/ops/ 参考）
   postprocess/postprocess.{hpp,cpp}   # 后处理层
   pipeline.{hpp,cpp}                  # 三层编排
   config.{hpp,cpp}                    # 推理配置

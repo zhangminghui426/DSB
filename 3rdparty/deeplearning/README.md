@@ -10,7 +10,7 @@
 ## 目录结构
 
 ```
-deepleraing/
+deeplearning/
 ├── models/            # 模型定义
 │   ├── backbones/     # swin, resnet, second, sparse_encoder
 │   ├── necks/         # glss, second, custom_fpn

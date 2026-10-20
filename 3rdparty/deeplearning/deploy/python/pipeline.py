@@ -11,7 +11,7 @@ lidar 体素化 + 稀疏编码、检测解码 + NMS）。
      fuser -> head.bbox
   -> [Postprocessor] 解码 + NMS -> boxes / scores / labels
 
-Usage (run from the model repo root 3rdparty/deepleraing):
+Usage (run from the model repo root 3rdparty/deeplearning):
   python deploy/python/pipeline.py CONFIG CKPT --task det --engine_dir outputs/trt \
       [--build] [--fp16] [--verify] [--sample-index N] [--dump out.npz]
 """
@@ -21,7 +21,7 @@ import os
 import os.path as osp
 import sys
 
-# deepleraing 根（上 3 级）：models/datasets/scripts 与 deploy.python 包都在其下
+# deeplearning 根（上 3 级）：models/datasets/scripts 与 deploy.python 包都在其下
 _DL_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))
 sys.path.insert(0, _DL_ROOT)
 

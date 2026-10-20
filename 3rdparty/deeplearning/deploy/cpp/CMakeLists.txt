@@ -43,7 +43,7 @@ endif()
 # 三层结构（与 deploy/python 对应）：
 #   preprocess/  预处理层（深度投影 / 体素化）
 #   inference/   推理层（TRT engine 编排 + trt_engine）
-#   ops/         自定义算子（CPU 实现，对应 3rdparty/deepleraing/ops 参考）
+#   ops/         自定义算子（CPU 实现，对应 3rdparty/deeplearning/ops 参考）
 #   postprocess/ 后处理层（解码 + NMS）
 #   pipeline/config/tensor/main 为编排与基础设施
 add_executable(dsb_infer

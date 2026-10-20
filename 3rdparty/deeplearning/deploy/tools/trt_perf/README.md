@@ -16,7 +16,7 @@ profile_<label>.json  逐层时延（根为 list；每项含 name/timeMs/average
 
 ```bash
 # 1) 采集（在 GPU 机器上，需先构建 engine）
-cd 3rdparty/deepleraing
+cd 3rdparty/deeplearning
 bash deploy/launch/perf_trt.sh det   # -> outputs/perf/layers_*.json + profile_*.json
 #    pip-only tensorrt 无 trtexec 时：TRTEXEC=/path/to/TensorRT-10.9/bin/trtexec bash deploy/launch/perf_trt.sh det
 
@@ -25,7 +25,7 @@ bash deploy/launch/perf_trt.sh det   # -> outputs/perf/layers_*.json + profile_*
 bash deploy/tools/trt_perf/run.sh    # -> outputs/perf/report/（analyze/validate/package 一条龙）
 
 # 3) 预览
-python -m http.server 8765 --bind 127.0.0.1 --directory 3rdparty/deepleraing/outputs/perf/report
+python -m http.server 8765 --bind 127.0.0.1 --directory 3rdparty/deeplearning/outputs/perf/report
 #   浏览器打开 http://127.0.0.1:8765/
 ```
 
