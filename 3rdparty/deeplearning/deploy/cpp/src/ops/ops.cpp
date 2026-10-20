@@ -180,21 +180,28 @@ Tensor bev_pool(const Config &cfg, const Tensor &geom, const Tensor &x) {
 
 // ================================================================ downsample
 // 3x (conv3x3 + bn + relu)；中间 conv stride 2；blob 布局按 DownLayer。
+// 输入 (B, C, H, W)（B=1）或 (C, H, W)，输出 (1, C_out, H_out, W_out)。
 Tensor downsample_conv(const Config &cfg, const Tensor &bev,
                        const std::vector<float> &blob) {
-  Tensor cur = bev;  // (C, H, W)
+  Tensor cur = bev;
+  const bool batched = cur.shape.size() == 4;
+  if (batched && cur.shape[0] != 1)
+    throw std::runtime_error("downsample supports batch=1 only");
+  int C_in = (int)cur.shape[batched ? 1 : 0];
+  int H = (int)cur.shape[batched ? 2 : 1];
+  int Wd = (int)cur.shape[batched ? 3 : 2];
   for (const auto &ly : cfg.down_layers) {
-    const int C_in = ly.in_c, C_out = ly.out_c, k = ly.k, s = ly.stride,
-              p = ly.pad;
+    const int C_out = ly.out_c, k = ly.k, s = ly.stride, p = ly.pad;
+    if (ly.in_c != C_in)
+      throw std::runtime_error("downsample channel mismatch");
     const float *W = blob.data() + ly.w_off;        // (C_out, C_in, k, k)
     const float *bias = blob.data() + ly.w_off + ly.w_len;
     const float *g = blob.data() + ly.w_off + ly.w_len + ly.b_len;
     const float *bta = blob.data() + ly.w_off + ly.w_len + 2 * ly.b_len;
     const float *mean = blob.data() + ly.w_off + ly.w_len + 3 * ly.b_len;
     const float *var = blob.data() + ly.w_off + ly.w_len + 4 * ly.b_len;
-    const int H = (int)cur.shape[1], Wd = (int)cur.shape[2];
     const int Ho = (H - k + 2 * p) / s + 1, Wo = (Wd - k + 2 * p) / s + 1;
-    Tensor nxt({C_out, Ho, Wo});
+    Tensor nxt({1, C_out, Ho, Wo});
     for (int co = 0; co < C_out; ++co)
       for (int ho = 0; ho < Ho; ++ho)
         for (int wo = 0; wo < Wo; ++wo) {
@@ -204,16 +211,20 @@ Tensor downsample_conv(const Config &cfg, const Tensor &bev,
               for (int kj = 0; kj < k; ++kj) {
                 const int hi = ho * s - p + ki, wi = wo * s - p + kj;
                 if (hi < 0 || hi >= H || wi < 0 || wi >= Wd) continue;
-                acc += W[((co * C_in + ci) * k + ki) * k + kj] *
-                       cur.at({ci, hi, wi});
+                const float v =
+                    batched ? cur.at({0, ci, hi, wi}) : cur.at({ci, hi, wi});
+                acc += W[((co * C_in + ci) * k + ki) * k + kj] * v;
               }
           const float s2 = var[co] + ly.bn_eps;
           const float v = (acc - mean[co]) / std::sqrt(s2) * g[co] + bta[co];
-          nxt.at({co, ho, wo}) = std::max(v, 0.0f);  // ReLU
+          nxt.at({0, co, ho, wo}) = std::max(v, 0.0f);  // ReLU
         }
     cur = std::move(nxt);
+    C_in = C_out;
+    H = Ho;
+    Wd = Wo;
   }
-  return cur;
+  return cur;  // (1, C, H, W)
 }
 
 // ================================================================ sparse
@@ -272,13 +283,13 @@ Tensor sparse_encoder_forward(const Config &cfg, const Tensor &feats,
     if (ly.type == "subm") {
       // 输出体素 == 输入体素
       Tensor nxt({(int)in_coords.size(), Cout});
-      for (int v = 0; v < (int)in_coords.size(); ++v) {
+      for (int vi = 0; vi < (int)in_coords.size(); ++vi) {
         for (int co = 0; co < Cout; ++co) {
           float acc = blob[ly.w_off + ly.w_len + co];  // bias
           for (int k = 0; k < K; ++k) {
-            const int nk[3] = {in_coords[v][0] + ly.offsets[k][0],
-                               in_coords[v][1] + ly.offsets[k][1],
-                               in_coords[v][2] + ly.offsets[k][2]};
+            const int nk[3] = {in_coords[vi][0] + ly.offsets[k][0],
+                               in_coords[vi][1] + ly.offsets[k][1],
+                               in_coords[vi][2] + ly.offsets[k][2]};
             auto it = in_map.find(key3(nk[0], nk[1], nk[2]));
             if (it == in_map.end()) continue;
             const float *xf = cur.data.data() + (size_t)it->second * Cin;
@@ -294,8 +305,9 @@ Tensor sparse_encoder_forward(const Config &cfg, const Tensor &feats,
           const float g = blob[ly.w_off + ly.w_len + (size_t)ly.b_len + co];
           const float b =
               blob[ly.w_off + ly.w_len + 2 * (size_t)ly.b_len + co];
-          const float v = (acc - mean) / std::sqrt(var + ly.bn_eps) * g + b;
-          nxt.data[v * Cout + co] = std::max(v, 0.0f);
+          const float bn_out =
+              (acc - mean) / std::sqrt(var + ly.bn_eps) * g + b;
+          nxt.data[vi * Cout + co] = std::max(bn_out, 0.0f);
         }
       }
       cur = std::move(nxt);
