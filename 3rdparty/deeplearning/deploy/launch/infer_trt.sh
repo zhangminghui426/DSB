@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# usage: deploy/launch/infer_trt.sh <det|seg> [checkpoint] [extra args...]
-# Builds (--build, optional --fp16) + runs TRT engines on a val sample.
-# Requires export.sh to have produced outputs/onnx/*.onnx first.
+# usage: deploy/launch/infer_trt.sh <det|seg> [extra args...]
+# Runs the TRT engines on a val sample (deploy/python/pipeline.py)。
+# TRT 推理直接用 --engine_dir 下的 engine，不需要 .pth；
+# 与 torch 参考对照时加 --verify --checkpoint <pth>。
+# Requires deploy/launch/export.sh to have produced outputs/onnx + outputs/trt.
 # ONNX -> engine uses trtexec (see deploy/python/builder.py): set
 # TRTEXEC=/path/to/bin/trtexec when the conda env is pip-only (no trtexec).
 set -e
@@ -11,10 +13,9 @@ cd "$DL"
 source "$HERE/env.sh"
 TASK="${1:?task: det|seg}"; shift || true
 case "$TASK" in
-  det) CFG=configs/det_convfuser.py;            CKPT=ckpts/bevfusion-det-bf.pth ;;
-  seg) CFG=configs/seg_fusion_bev256d2_lss.py;  CKPT=ckpts/bevfusion-seg-bf.pth ;;
+  det) CFG=configs/det_convfuser.py ;;
+  seg) CFG=configs/seg_fusion_bev256d2_lss.py ;;
   *) echo "unknown task: $TASK" >&2; exit 2 ;;
 esac
-if [ $# -gt 0 ] && [ -f "${1:-}" ]; then CKPT="$1"; shift; fi
-[ -f "$CKPT" ] || { echo "checkpoint missing: $CKPT" >&2; exit 2; }
-"$PY" "$DL/deploy/python/pipeline.py" "$CFG" "$CKPT" --task "$TASK" "$@"
+[ -f "$CFG" ] || { echo "config missing: $CFG" >&2; exit 2; }
+"$PY" "$DL/deploy/python/pipeline.py" "$CFG" --task "$TASK" "$@"

@@ -1,5 +1,9 @@
 """Split-module ONNX export + trtexec engine build for BEVFusion det / seg.
 
+【部署前置步骤】Python 与 C++ 推理共用：导出分模块 ONNX -> trtexec 构建
+TRT engine。Python 侧直接以 engine 推理（deploy/python/pipeline.py），
+C++ 侧另用 deploy/tools/export_cpp_input.py 从 val 样本导出输入文件。
+
 Follows the CUDA-BEVFusion (NVIDIA-AI-IOT/Lidar_AI_Solution) module split so
 every exported graph is dense and TRT-parseable without custom plugins. The
 runtime split (deploy.python.pipeline + deploy.python.builder) keeps the
@@ -12,7 +16,7 @@ ONNX export is immediately followed by the trtexec engine build for every
 graph (skip with --onnx-only). trtexec lookup: $TRTEXEC env, then PATH.
 
 Usage (run from the model repo root 3rdparty/deeplearning):
-  python deploy/python/export.py CONFIG CHECKPOINT --task det --verify --fp16
+  python deploy/export.py CONFIG CHECKPOINT --task det --verify --fp16
 """
 
 import argparse
@@ -20,8 +24,8 @@ import os
 import os.path as osp
 import sys
 
-# deeplearning 根（上 3 级）：models/datasets/scripts 与 deploy.python 包都在其下
-_DL_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))
+# deeplearning 根（上 2 级）：models/datasets/scripts 与 deploy.python 包都在其下
+_DL_ROOT = osp.dirname(osp.dirname(osp.abspath(__file__)))
 sys.path.insert(0, _DL_ROOT)
 
 import numpy as np

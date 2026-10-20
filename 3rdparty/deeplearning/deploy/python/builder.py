@@ -125,7 +125,7 @@ class EngineBuilder:
                     autocast_fp16=False):
         onnx_path = osp.join(onnx_dir, f"{name}.onnx")
         assert osp.exists(onnx_path), (
-            f"missing {onnx_path} — run deploy/python/export.py first")
+            f"missing {onnx_path} — run deploy/export.py first")
         self.build(onnx_path, osp.join(engine_dir, f"{name}.engine"),
                    fp16=fp16, autocast_fp16=autocast_fp16)
 

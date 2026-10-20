@@ -1,10 +1,11 @@
 """Deploy namespace root.
 
 TRT 推理部署代码（属于深度学习/模型库范畴）：
-  python/   Python 部署包（deploy.python：export/builder/runtime + 三层推理）
-  cpp/      C++ 推理（dsb_infer：preprocess/inference/postprocess + ops）
-  tools/    export_cpp_input.py（C++ 输入导出）+ trt_perf（性能分析）
-  launch/   部署启动脚本（export/infer_trt/perf_trt/visualize_trt）
+  export.py  Python/C++ 推理共用的前置步骤：分模块 ONNX 导出 + trtexec 构建 engine
+  python/    Python 部署包（deploy.python：三层推理 + builder/runtime）
+  cpp/       C++ 推理（dsb_infer：preprocess/inference/postprocess + ops）
+  tools/     export_cpp_input.py（C++ 输入导出）+ trt_perf（性能分析）
+  launch/    部署启动脚本（export/infer_trt/perf_trt/visualize_trt）
 
 三层架构（python 与 cpp 结构对应）：
   preprocess   预处理：原始样本 -> 模型输入（深度投影 / 体素化）

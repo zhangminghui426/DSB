@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# usage: deploy/launch/visualize_trt.sh [checkpoint] [extra args...]
+# usage: deploy/launch/visualize_trt.sh [extra args...]
 # Renders TRT inference results to outputs/vis/:
 #   sample{N}_det.jpg            BEV + 6 camera views with projected 3D boxes
 #   sample{N}-{M}_seq.gif        temporal sequence gif (--frames N)
-# Reuse a previous dump with: --npz outputs/trt/sample5.npz
+# TRT 推理直接用 engine（不需要 checkpoint）；也可 --npz 复用已 dump 结果。
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deeplearning/deploy/launch
 DL="$(cd "$HERE/../.." && pwd)"                  # 3rdparty/deeplearning（模型库根）
 cd "$DL"
 source "$HERE/env.sh"
 CFG=configs/det_convfuser.py
-CKPT=ckpts/bevfusion-det-bf.pth
-if [ $# -gt 0 ] && [ -f "${1:-}" ]; then CKPT="$1"; shift; fi
-"$PY" "$DL/deploy/python/visualize.py" "$CFG" "$CKPT" \
+"$PY" "$DL/deploy/python/visualize.py" "$CFG" \
     --engine_dir outputs/trt --out outputs/vis "$@"

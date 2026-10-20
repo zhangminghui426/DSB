@@ -47,7 +47,7 @@ def parse_args():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("config")
     p.add_argument("checkpoint", nargs="?", default=None,
-                   help="needed for the online (TRT) mode; ignored with --npz")
+                   help="可选；TRT 推理直接用 engine，仅传入时加载权重（一般不需要）")
     p.add_argument("--engine_dir", default=osp.join("outputs", "trt"))
     p.add_argument("--sample-index", type=int, default=0,
                    help="first frame index (consecutive samples = same-scene sweeps)")
@@ -126,12 +126,13 @@ def main():
     # online mode: load model + engines once, reuse for every frame
     inf = None
     if not args.npz:
-        assert args.checkpoint, "checkpoint required for the online TRT mode"
         from models import build_model
-        from scripts.trainer import load_model_checkpoint
 
+        # TRT 推理直接用 engine；模型骨架提供结构信息，权重非必需
         model = build_model(cfg.model).cuda().eval()
-        load_model_checkpoint(model, args.checkpoint, strict=True)
+        if args.checkpoint:
+            from scripts.trainer import load_model_checkpoint
+            load_model_checkpoint(model, args.checkpoint, strict=True)
 
         from deploy.python.inference import Inferencer
         from deploy.python.postprocess import Postprocessor

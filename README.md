@@ -54,12 +54,16 @@ cd 3rdparty/deeplearning
 python scripts/train.py configs/det_convfuser.py --load_from ckpts/bevfusion-det-bf.pth
 python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eval bbox
 
-# 导出 ONNX + 构建 TRT engine（--verify 用 onnxruntime 逐图校验；--fp16 需 TRT<10.12 或 --autocast-fp16）
-python deploy/python/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task det --verify --fp16
+# 导出 ONNX + 构建 TRT engine（Python/C++ 推理共用的前置步骤；--verify 用 onnxruntime 逐图校验）
+python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task det --verify --fp16
 
-# TRT 推理并保存解码结果
-python deploy/python/pipeline.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+# TRT 推理（直接用 engine，不需要 .pth）并保存解码结果
+python deploy/python/pipeline.py configs/det_convfuser.py --task det \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
+
+# 与 torch 参考对照（可选，需 checkpoint）
+python deploy/python/pipeline.py configs/det_convfuser.py --checkpoint ckpts/bevfusion-det-bf.pth \
+    --task det --engine_dir outputs/trt --verify
 
 # 部署启动脚本（export / infer / visualize / perf）
 bash deploy/launch/export.sh det

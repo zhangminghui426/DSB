@@ -1,6 +1,6 @@
 """TRT 推理编排入口：Preprocessor -> Inferencer -> Postprocessor。
 
-导出 ONNX 图（deploy.python.export）以 TRT engine 运行（deploy.python.runtime）；
+导出 ONNX 图（deploy.export）以 TRT engine 运行（deploy.python.runtime）；
 自定义 CUDA 算子留在 torch/CUDA 侧（几何 + bev_pool + 降采样、
 lidar 体素化 + 稀疏编码、检测解码 + NMS）。
 
@@ -12,8 +12,12 @@ lidar 体素化 + 稀疏编码、检测解码 + NMS）。
   -> [Postprocessor] 解码 + NMS -> boxes / scores / labels
 
 Usage (run from the model repo root 3rdparty/deeplearning):
-  python deploy/python/pipeline.py CONFIG CKPT --task det --engine_dir outputs/trt \
-      [--build] [--fp16] [--verify] [--sample-index N] [--dump out.npz]
+  # TRT 推理直接用已构建的 engine（不需要 .pth；--build 可由 export.py 产出）
+  python deploy/python/pipeline.py CONFIG --task det --engine_dir outputs/trt \
+      [--sample-index N] [--dump out.npz]
+  # 与 torch 参考对照时才需要 checkpoint
+  python deploy/python/pipeline.py CONFIG --checkpoint ckpts/bevfusion-det-bf.pth \
+      --task det --engine_dir outputs/trt --verify
 """
 
 import argparse
@@ -85,7 +89,9 @@ class TrtPipeline:
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("config")
-    ap.add_argument("checkpoint")
+    ap.add_argument("--checkpoint", default=None,
+                    help="torch checkpoint，仅 --verify 对照 torch 参考时需要；"
+                         "TRT 推理直接用 --engine_dir 下的 engine，不依赖权重")
     ap.add_argument("--task", default="det", choices=["det", "seg"])
     ap.add_argument("--onnx_dir", default=osp.join("outputs", "onnx"))
     ap.add_argument("--engine_dir", default=osp.join("outputs", "trt"))
@@ -108,8 +114,13 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
 
     cfg = load_config(args.config, options=args.options)
+    # 模型骨架提供结构信息（voxelize / head / 特征维度）；权重仅在 --verify
+    # 对照 torch 参考时需要加载。
     model = build_model(cfg.model).cuda().eval()
-    load_model_checkpoint(model, args.checkpoint, strict=True)
+    if args.checkpoint:
+        load_model_checkpoint(model, args.checkpoint, strict=True)
+    if args.verify and not args.checkpoint:
+        ap.error("--verify 需要 --checkpoint（torch 参考权重）")
 
     engines = load_engines(args.task, args.onnx_dir, args.engine_dir,
                            build=args.build, fp16=args.fp16,

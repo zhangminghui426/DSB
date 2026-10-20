@@ -78,14 +78,15 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 | `head.bbox/map.onnx` | decoder_feat → 9 个 pred（含 query_labels）/ masks | 不解码，decode 留在 torch |
 
 ```bash
-# 1. 导出 ONNX 并构建 TRT engine（一步完成；--verify 用 onnxruntime 逐图校验，
-#    需 pip install onnx onnxruntime；engine 构建只走 trtexec CLI，$TRTEXEC 或
+# 1. 导出 ONNX 并构建 TRT engine（Python/C++ 推理共用的前置步骤；--verify 用
+#    onnxruntime 逐图校验；engine 构建只走 trtexec CLI，$TRTEXEC 或
 #    PATH，pip-only tensorrt 无 trtexec 时需 TRTEXEC=/path/to/TensorRT-10.9.../bin/trtexec）
-python deploy/python/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --task det --verify --fp16
 
-# 2. 保存解码结果
-python deploy/python/pipeline.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+# 2. TRT 推理并保存解码结果（直接用 engine，不需要 .pth；
+#    与 torch 参考对照再加 --checkpoint ... --verify）
+python deploy/python/pipeline.py configs/det_convfuser.py \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```
 
@@ -99,7 +100,7 @@ launch/train.sh det               # 训练（det|seg|multitask|occ|m0|stereo|stb
 launch/eval.sh det                # 评估
 launch/visualize.sh det           # 可视化
 bash deploy/launch/export.sh det              # 导出 ONNX
-bash deploy/launch/infer_trt.sh det           # TRT 推理（加 --build --fp16 --verify 透传）
+bash deploy/launch/infer_trt.sh det           # TRT 推理（--verify --checkpoint 透传）
 bash deploy/launch/visualize_trt.sh det       # TRT 推理结果可视化（jpg/gif -> outputs/vis/）
 bash deploy/launch/perf_trt.sh det            # trtexec 采集逐层 profile -> outputs/perf/
 ```

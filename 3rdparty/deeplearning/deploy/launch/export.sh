@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # usage: deploy/launch/export.sh <det|seg> [checkpoint] [extra args...]
-# Exports the 4 module graphs to ONNX, then builds the TRT engines
-# (trtexec CLI) in one step. Pass --onnx-only for ONNX only.
-# Runs with the model repo (3rdparty/deeplearning) as CWD so
+# Python 与 C++ 推理共用的前置导出：4 张分模块图 -> ONNX -> TRT engine
+# （trtexec CLI）一步完成。C++ 侧输入文件另用 deploy/tools/export_cpp_input.py。
+# 可选 --onnx-only（只导出 ONNX）。Runs with the model repo as CWD so
 # configs/ ckpts/ outputs/ relative paths keep working.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deeplearning/deploy/launch
@@ -17,4 +17,4 @@ case "$TASK" in
 esac
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then CKPT="$1"; shift; fi
 [ -f "$CKPT" ] || { echo "checkpoint missing: $CKPT" >&2; exit 2; }
-"$PY" "$DL/deploy/python/export.py" "$CFG" "$CKPT" --task "$TASK" "$@"
+"$PY" "$DL/deploy/export.py" "$CFG" "$CKPT" --task "$TASK" "$@"

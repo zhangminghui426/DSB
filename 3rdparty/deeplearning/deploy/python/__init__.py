@@ -1,9 +1,12 @@
-"""Deploy package: split-module ONNX export -> trtexec engine build -> TRT infer.
+"""Deploy python package: TRT 推理（预处理 / 推理 / 后处理三层）。
+
+ONNX 导出与 engine 构建是 Python/C++ 推理共用的前置步骤，入口在
+deploy/export.py（本包之上）；本包负责 engine 加载与三层推理编排。
 
 Entry points (each has a CLI; run from the model repo 3rdparty/deeplearning):
-  python deploy/python/export.py      CONFIG CKPT --task det [--verify]
-  python deploy/python/builder.py     --task det [--fp16]
-  python deploy/python/pipeline.py    CONFIG CKPT --task det [--build]
+  python deploy/export.py       CONFIG CKPT --task det [--verify]   # 前置导出
+  python deploy/python/builder.py     --task det [--fp16]            # 仅构建 engine
+  python deploy/python/pipeline.py    CONFIG --task det [--checkpoint] [--verify]
 
 三层架构（预处理 / 推理 / 后处理）：
   preprocess   Preprocessor: 原始样本 -> 模型输入（深度投影 / 体素化）
@@ -14,7 +17,6 @@ Entry points (each has a CLI; run from the model repo 3rdparty/deeplearning):
 其他模块：
   config       DeployConfig: shared paths / precision / behavior knobs
   graphs       GRAPH_IO + DET_HEAD_KEYS: single source of tensor names
-  export       OnnxExporter: module-split ONNX export + trtexec engine build
   builder      EngineBuilder: ONNX -> engine via the trtexec CLI only
   runtime      TrtEngine + load_engines: engine load / execute
   bev_pool_torch   camera_bev_from_depthnet (geometry + bev_pool)
