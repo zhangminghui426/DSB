@@ -10,7 +10,7 @@
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # 本目录位于 3rdparty/deeplearning/deploy/tools/trt_perf/，上 5 级为仓库根
-REPO_ROOT="$(cd "$HERE/../../../.." && pwd)"
+REPO_ROOT="$(cd "$HERE/../../../../.." && pwd)"
 # Resolve PERF_DIR against the repo root so the script works from any CWD.
 PERF_DIR="${1:-$REPO_ROOT/3rdparty/deeplearning/outputs/perf}"
 case "$PERF_DIR" in
