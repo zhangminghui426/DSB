@@ -64,8 +64,8 @@ def load_engines(task, onnx_dir, engine_dir, build=False, fp16=False,
         engine_path = osp.join(engine_dir, f"{name}.engine")
         if not osp.exists(engine_path):
             raise FileNotFoundError(
-                f"missing {engine_path} — run deploy/python/builder.py first "
-                f"(or pass --build)")
+                f"missing {engine_path} — run deploy/export.py CONFIG CKPT "
+                f"--task {task} first (or pass --build)")
         engines[name] = TrtEngine(engine_path)
         print(f"[trt] loaded {engine_path}")
     return engines
