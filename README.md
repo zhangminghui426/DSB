@@ -4,22 +4,25 @@ BEV 感知（BEVFusion + FlashOCC）+ 雷达-相机标定（fast_calib）统一�
 
 ## 目录结构
 
-- `app/` — Streamlit UI（上传 mcap、运行标定、3D 预览）· [app.py](app/app.py)
-- `src/` — 工程代码（预留 ROS2 集成）· [README](src/README.md)
-- `3rdparty/`
-  - `deeplearning/` — 深度学习模型库 · [README](3rdparty/deeplearning/README.md)
-    - `models/` — BEVFusion/FlashOCC 模型 + SECOND 标定板检测器
-    - `datasets/ scripts/ configs/ ops/ tools/ tests/ launch/`
-    - `deploy/` — TRT 推理部署 · [README](3rdparty/deeplearning/deploy/README.md)
-      - `python/` — Python 推理（scripts/ 入口 + 库三层）· [README](3rdparty/deeplearning/deploy/python/README.md)
-      - `cpp/` — C++ 推理（include/ + src/，同三层 + ops）· [README](3rdparty/deeplearning/deploy/cpp/README.md)
-      - `tools/` — C++ 输入导出
-      - `launch/` — export/infer_trt/visualize_trt 启动脚本
-  - `fast_calib/` — 雷达-相机外参标定 · [README](3rdparty/fast_calib/README.md)
-- `packet/` — Docker 安装包（CUDA/cuDNN/TensorRT）
-- `tools/` — 工程工具 · [README](tools/README.md)
-- `Dockerfile / requirements.txt / docs/`
-- `README.md`
+```
+DSB/
+├── app/                     # Streamlit UI（上传 mcap、运行标定、3D 预览）
+├── src/                     # 工程代码（预留 ROS2 集成）
+├── 3rdparty/
+│   ├── deeplearning/        # 深度学习模型库
+│   │   ├── models/          # BEVFusion/FlashOCC 模型 + SECOND 标定板检测器
+│   │   ├── datasets/ scripts/ configs/ ops/ tools/ tests/ launch/
+│   │   └── deploy/          # TRT 推理部署
+│   │       ├── python/      # Python 推理（scripts/ 入口 + 库三层）
+│   │       ├── cpp/         # C++ 推理（include/ + src/，同三层 + ops）
+│   │       ├── tools/       # C++ 输入导出
+│   │       └── launch/      # export/infer_trt/visualize_trt 启动脚本
+│   └── fast_calib/          # 雷达-相机外参标定
+├── packet/                  # Docker 安装包（CUDA/cuDNN/TensorRT）
+├── tools/                   # 工程工具
+├── Dockerfile / requirements.txt / docs/
+└── README.md
+```
 
 ## 快速开始
 
