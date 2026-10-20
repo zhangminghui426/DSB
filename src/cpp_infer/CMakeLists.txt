@@ -43,10 +43,12 @@ endif()
 add_executable(dsb_infer
   src/main.cpp
   src/pipeline.cpp
-  src/trt_engine.cpp
+  src/config.cpp
+  src/preprocess.cpp
+  src/inference.cpp
+  src/postprocess.cpp
   src/ops.cpp
-  src/sparse_conv.cpp
-  src/decode.cpp
+  src/trt_engine.cpp
 )
 target_include_directories(dsb_infer PRIVATE include ${TENSORRT_INCLUDE_DIR})
 target_link_libraries(dsb_infer PRIVATE ${TENSORRT_LIB})
