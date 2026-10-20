@@ -128,10 +128,9 @@ Tensor Inferencer::lidar_branch(const Preprocessor::Inputs &in) const {
   Preprocessor(cfg_).voxelize(in, vfeats, vcoords, vsizes);
   Tensor lidar_bev = sparse_encoder_forward(cfg_, vfeats, vcoords, vsizes,
                                             sparse_blob_);
-  std::printf("[dsb]   lidar_bev %ldx%ldx%ldx%ld (voxels %ld)\n",
+  std::printf("[dsb]   lidar_bev %ldx%ldx%ld (voxels %ld)\n",
               (long)lidar_bev.shape[0], (long)lidar_bev.shape[1],
-              (long)lidar_bev.shape[2], (long)lidar_bev.shape[3],
-              (long)vcoords.shape[0]);
+              (long)lidar_bev.shape[2], (long)vcoords.shape[0]);
   return lidar_bev;
 }
 

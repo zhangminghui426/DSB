@@ -66,9 +66,15 @@ Tensor Preprocessor::project_depth(const Inputs &in) const {
   const Mat3 la_rot_inv = Mat3::inverse(la_rot);
 
   for (int c = 0; c < ncam; ++c) {
-    const Mat3 l2i = in.camera2lidar[c].rot3();
-    float l2i_t[3];
-    in.camera2lidar[c].col3(3, l2i_t);
+    // lidar -> camera：camera2lidar 是 camera->lidar（sensor2lidar），取逆
+    const Mat3 c2l_rot = in.camera2lidar[c].rot3();
+    float c2l_t[3];
+    in.camera2lidar[c].col3(3, c2l_t);
+    const Mat3 c2l_inv = Mat3::inverse(c2l_rot);
+    // intrins 内参（row-major 4x4：fx=m[0], fy=m[5], cx=m[2], cy=m[6]）
+    const float fx = in.intrins[c].m[0], fy = in.intrins[c].m[5];
+    const float cx = in.intrins[c].m[2], cy = in.intrins[c].m[6];
+    // img 增强完整 3x3 仿射（z=1）
     const Mat3 ia_rot = in.img_aug[c].rot3();
     float ia_t[3];
     in.img_aug[c].col3(3, ia_t);
@@ -78,18 +84,18 @@ Tensor Preprocessor::project_depth(const Inputs &in) const {
       const float v[3] = {p[0] - la_t[0], p[1] - la_t[1], p[2] - la_t[2]};
       float world[3];
       la_rot_inv.matvec(v, world);
-      // lidar2image
-      float c0[3];
-      l2i.matvec(world, c0);
-      c0[0] += l2i_t[0];
-      c0[1] += l2i_t[1];
-      c0[2] += l2i_t[2];
-      const float dist = c0[2];
-      const float z = std::clamp(c0[2], 1e-5f, 1e5f);
-      const float px = c0[0] / z, py = c0[1] / z;
-      // img 增强
-      const float x = ia_rot.m[0] * px + ia_rot.m[1] * py + ia_t[0];
-      const float y = ia_rot.m[3] * px + ia_rot.m[4] * py + ia_t[1];
+      // lidar -> camera 刚体
+      const float vc[3] = {world[0] - c2l_t[0], world[1] - c2l_t[1],
+                           world[2] - c2l_t[2]};
+      float cam[3];
+      c2l_inv.matvec(vc, cam);
+      const float dist = cam[2];
+      const float z = std::clamp(cam[2], 1e-5f, 1e5f);
+      const float px = fx * cam[0] / z + cx;
+      const float py = fy * cam[1] / z + cy;
+      // img 增强（与 torch cur_img_aug_matrix.matmul 一致，含第三列*1）
+      const float x = ia_rot.m[0] * px + ia_rot.m[1] * py + ia_rot.m[2] + ia_t[0];
+      const float y = ia_rot.m[3] * px + ia_rot.m[4] * py + ia_rot.m[5] + ia_t[1];
       const float gx = y, gy = x;  // grid-sample (y, x) 顺序交换
       if (gx >= 0 && gx < H && gy >= 0 && gy < W) {
         const int64_t ix = (int64_t)gx, iy = (int64_t)gy;
