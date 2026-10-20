@@ -1,6 +1,6 @@
 """Visualize TRT inference results: per-frame jpgs + temporal-sequence gif.
 
-Runs the TRT pipeline (deploy.inferencer) over consecutive val samples — or
+Runs the TRT pipeline (deploy.pipeline) over consecutive val samples — or
 reuses one existing npz dump (single frame) — and renders to <out>/ (default
 outputs/vis/, kept separate from the model/ckpt tree):
 
@@ -131,12 +131,16 @@ def main():
         model = build_model(cfg.model).cuda().eval()
         load_model_checkpoint(model, args.checkpoint, strict=True)
 
-        from deploy.inferencer import DetInferencer
+        from deploy.inference import Inferencer
+        from deploy.postprocess import Postprocessor
+        from deploy.preprocess import Preprocessor
         from deploy.runtime import load_engines
 
         engines = load_engines("det", osp.join("outputs", "onnx"),
                                args.engine_dir, build=False)
-        inf = DetInferencer(model, engines, "det")
+        pre = Preprocessor(model)
+        inf = Inferencer(model, engines, "det")
+        post = Postprocessor(model)
 
     frames_pil = []
     for idx in indices:
@@ -150,8 +154,8 @@ def main():
             labels = torch.from_numpy(d["labels"]).long()
             mode = f"npz {args.npz}"
         else:
-            preds, _ = inf.infer(batch)
-            boxes, scores, labels = inf.decode(preds, batch["metas"])
+            preds, _ = inf.infer(batch, pre(batch))
+            boxes, scores, labels = post.decode(preds, batch["metas"])
             mode = f"TRT engines {args.engine_dir}"
 
         frame = render_frame(batch, sample, idx, boxes, scores, labels,

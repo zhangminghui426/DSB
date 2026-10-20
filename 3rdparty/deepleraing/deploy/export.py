@@ -2,10 +2,10 @@
 
 Follows the CUDA-BEVFusion (NVIDIA-AI-IOT/Lidar_AI_Solution) module split so
 every exported graph is dense and TRT-parseable without custom plugins. The
-runtime split (deploy.inferencer + deploy.builder) keeps the custom-CUDA-op
+runtime split (deploy.pipeline + deploy.builder) keeps the custom-CUDA-op
 parts on torch/CUDA: camera geometry + bev_pool + vtransform downsample
 (deploy.bev_pool_torch), lidar voxelization + sparse encoder
-(deploy.lidar_branch), box decode (models.heads.transfusion).
+(deploy.inference.sparse_encoder_forward), box decode (models.heads.transfusion).
 
 ONNX export is immediately followed by the trtexec engine build for every
 graph (skip with --onnx-only). trtexec lookup: $TRTEXEC env, then PATH.
@@ -179,17 +179,18 @@ def _bn_restore(model, state):
 def _sample_inputs(cfg, model, task):
     """One real val sample -> example tensors for every graph."""
     from deploy.bev_pool_torch import camera_bev_from_depthnet
-    from deploy.lidar_branch import LidarBranchEncoder
-    from deploy.preprocess import project_depth
+    from deploy.inference import sparse_encoder_forward
+    from deploy.preprocess import Preprocessor, project_depth
 
     ds = build_dataset(cfg.data.val)
     sample = ds[0]
     batch = to_device(collate_fn([sample]), "cuda")
     img = batch["img"]
 
-    lidar_enc = LidarBranchEncoder(model)
     # keep points on the model device so fuser can cat cam/lidar BEVs
-    lidar_bev = lidar_enc([batch["points"][0]], use_fp16=False)
+    pre = Preprocessor(model)
+    vfeats, vcoords, vsizes = pre.voxelize(batch["points"][0])
+    lidar_bev = sparse_encoder_forward(model, vfeats, vcoords, vsizes)
 
     with torch.no_grad():
         feats = CamBackbone(model)(img)
