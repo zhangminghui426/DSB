@@ -21,8 +21,8 @@ cd 3rdparty/deeplearning
 bash deploy/launch/perf_trt.sh det   # -> outputs/perf/layers_*.json + profile_*.json
 #    pip-only tensorrt 无 trtexec 时：TRTEXEC=/path/to/TensorRT-10.9/bin/trtexec bash deploy/launch/perf_trt.sh det
 
-# 2) 生成报告（首次运行会自动从 NVIDIA/TensorRT 官方仓库拉取 report_template 的
-#    app.js / netron-assets.js 大文件，见 run.sh）
+# 2) 生成报告（report_template 的 app.js / netron-assets.js 已随仓库分发，
+#    离线可用；本地缺失时才回退从 NVIDIA 官方拉取，见 run.sh）
 bash deploy/tools/trt_perf/run.sh    # -> outputs/perf/report/（analyze/validate/package 一条龙）
 
 # 3) 预览
