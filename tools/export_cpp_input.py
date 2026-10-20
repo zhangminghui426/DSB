@@ -161,6 +161,21 @@ def main():
         return p if osp.exists(p) else osp.join(_DL_ROOT, p)
 
     cfg = load_config(resolve(args.config))
+
+    # rebase bare relative data paths onto 3rdparty/deepleraing
+    def rebase(p):
+        return p if (not p or osp.isabs(p) or osp.exists(p)) else \
+            osp.join(_DL_ROOT, p)
+
+    for phase in ("train", "val", "test"):
+        d = cfg.data.get(phase)
+        if not d:
+            continue
+        if d.get("dataset_root"):
+            d["dataset_root"] = rebase(d["dataset_root"])
+        if d.get("ann_file"):
+            d["ann_file"] = rebase(d["ann_file"])
+
     model = build_model(cfg.model).cuda().eval()
     load_model_checkpoint(model, resolve(args.checkpoint), strict=True)
 
