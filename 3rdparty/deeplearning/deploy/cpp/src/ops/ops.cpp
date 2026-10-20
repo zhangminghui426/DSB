@@ -181,6 +181,7 @@ Tensor bev_pool(const Config &cfg, const Tensor &geom, const Tensor &x) {
 // ================================================================ downsample
 // 3x (conv3x3 + bn + relu)；中间 conv stride 2；blob 布局按 DownLayer。
 // 输入 (B, C, H, W)（B=1）或 (C, H, W)，输出 (1, C_out, H_out, W_out)。
+// CPU 参考实现（裸指针 + 顺序访问；GPU 版见 cuda_kernels.cu）。
 Tensor downsample_conv(const Config &cfg, const Tensor &bev,
                        const std::vector<float> &blob) {
   Tensor cur = bev;
@@ -201,24 +202,34 @@ Tensor downsample_conv(const Config &cfg, const Tensor &bev,
     const float *mean = blob.data() + ly.w_off + ly.w_len + 3 * ly.b_len;
     const float *var = blob.data() + ly.w_off + ly.w_len + 4 * ly.b_len;
     const int Ho = (H - k + 2 * p) / s + 1, Wo = (Wd - k + 2 * p) / s + 1;
+    const float *cur_d = cur.data.data();
+    const int64_t in_stride = (int64_t)H * Wd;  // B=1：ci 维步长
     Tensor nxt({1, C_out, Ho, Wo});
-    for (int co = 0; co < C_out; ++co)
+    float *out_d = nxt.data.data();
+    for (int co = 0; co < C_out; ++co) {
+      const float *Wco = W + (int64_t)co * C_in * k * k;
       for (int ho = 0; ho < Ho; ++ho)
         for (int wo = 0; wo < Wo; ++wo) {
           float acc = bias[co];
-          for (int ci = 0; ci < C_in; ++ci)
-            for (int ki = 0; ki < k; ++ki)
+          for (int ci = 0; ci < C_in; ++ci) {
+            const float *cur_ci = cur_d + (int64_t)ci * in_stride;
+            const float *Wci = Wco + (int64_t)ci * k * k;
+            for (int ki = 0; ki < k; ++ki) {
+              const int hi = ho * s - p + ki;
+              if (hi < 0 || hi >= H) continue;
+              const float *row = cur_ci + (int64_t)hi * Wd;
               for (int kj = 0; kj < k; ++kj) {
-                const int hi = ho * s - p + ki, wi = wo * s - p + kj;
-                if (hi < 0 || hi >= H || wi < 0 || wi >= Wd) continue;
-                const float v =
-                    batched ? cur.at({0, ci, hi, wi}) : cur.at({ci, hi, wi});
-                acc += W[((co * C_in + ci) * k + ki) * k + kj] * v;
+                const int wi = wo * s - p + kj;
+                if (wi < 0 || wi >= Wd) continue;
+                acc += Wci[ki * k + kj] * row[wi];
               }
+            }
+          }
           const float s2 = var[co] + ly.bn_eps;
           const float v = (acc - mean[co]) / std::sqrt(s2) * g[co] + bta[co];
-          nxt.at({0, co, ho, wo}) = std::max(v, 0.0f);  // ReLU
+          out_d[((int64_t)co * Ho + ho) * Wo + wo] = std::max(v, 0.0f);  // ReLU
         }
+    }
     cur = std::move(nxt);
     C_in = C_out;
     H = Ho;

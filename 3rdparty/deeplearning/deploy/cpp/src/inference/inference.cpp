@@ -49,36 +49,41 @@ void fold_depth_features(const Config &cfg, const Tensor &depthnet,
   const int D = cfg.depth_bins(), C = cfg.vt_out_c;
   const int fH = cfg.feat_h, fW = cfg.feat_w;
   const int N = cfg.N;
+  const int area = fH * fW;
   const float *dn = depthnet.data.data();
 
-  std::vector<float> depth_p(D * fH * fW * N);
-  for (int n = 0; n < N; ++n)
-    for (int h = 0; h < fH; ++h)
-      for (int w = 0; w < fW; ++w) {
-        const float *logits = dn + ((n * (D + C) + 0) * fH + h) * fW + w;
-        float mx = -1e30f;
-        for (int d = 0; d < D; ++d) mx = std::max(mx, logits[d * fH * fW]);
-        double sum = 0;
-        std::vector<float> e(D);
-        for (int d = 0; d < D; ++d) {
-          e[d] = std::exp(logits[d * fH * fW] - mx);
-          sum += e[d];
-        }
-        float *dp = depth_p.data() + ((n * D + 0) * fH + h) * fW + w;
-        for (int d = 0; d < D; ++d) dp[d * fH * fW] = (float)(e[d] / sum);
+  std::vector<float> depth_p(D * area * N);
+  std::vector<float> e(D);  // 复用 softmax 暂存，避免每次循环堆分配
+  for (int n = 0; n < N; ++n) {
+    const int n_off = n * (D + C) * area;
+    for (int hw = 0; hw < area; ++hw) {
+      const float *logits = dn + n_off + hw;
+      float mx = -1e30f;
+      for (int d = 0; d < D; ++d) mx = std::max(mx, logits[d * area]);
+      double sum = 0;
+      for (int d = 0; d < D; ++d) {
+        e[d] = std::exp(logits[d * area] - mx);
+        sum += e[d];
       }
+      float *dp = depth_p.data() + n * D * area + hw;
+      const float inv = (float)(1.0 / sum);
+      for (int d = 0; d < D; ++d) dp[d * area] = e[d] * inv;
+    }
+  }
 
-  const float *ft = dn + D * fH * fW;
-  for (int n = 0; n < N; ++n)
-    for (int d = 0; d < D; ++d)
-      for (int h = 0; h < fH; ++h)
-        for (int w = 0; w < fW; ++w) {
-          const float dp = depth_p[((n * D + d) * fH + h) * fW + w];
-          const float *fc = ft + n * (C * fH * fW) + h * fW + w;
-          float *xc =
-              x.data.data() + (((n * D + d) * fH + h) * fW + w) * C;
-          for (int c = 0; c < C; ++c) xc[c] = dp * fc[c * fH * fW];
-        }
+  const float *ft = dn + D * area;
+  for (int n = 0; n < N; ++n) {
+    const float *fc = ft + n * C * area;
+    float *xbase = x.data.data() + (int64_t)n * D * area * C;
+    for (int hw = 0; hw < area; ++hw) {
+      const float *feat_c = fc + hw;
+      for (int d = 0; d < D; ++d) {
+        const float dp = depth_p[n * D * area + d * area + hw];
+        float *xc = xbase + ((int64_t)d * area + hw) * C;
+        for (int c = 0; c < C; ++c) xc[c] = dp * feat_c[c * area];
+      }
+    }
+  }
 }
 
 }  // namespace
