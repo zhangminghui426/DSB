@@ -1,7 +1,7 @@
 #pragma once
 // TensorRT engine wrapper (trt_engine.cpp): deserialize + execute.
 
-#include "dsb_infer/tensor.hpp"
+#include "tensor.hpp"
 
 #include <map>
 #include <string>

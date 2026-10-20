@@ -2,10 +2,10 @@
 // 推理编排：Preprocessor -> Inferencer -> Postprocessor（+ verify / dump）。
 // 与 Python 侧 deploy/pipeline.py（TrtPipeline）逐层对应。
 
-#include "dsb_infer/config.hpp"
-#include "dsb_infer/inference/inference.hpp"
-#include "dsb_infer/postprocess/postprocess.hpp"
-#include "dsb_infer/preprocess/preprocess.hpp"
+#include "config.hpp"
+#include "inference/inference.hpp"
+#include "postprocess/postprocess.hpp"
+#include "preprocess/preprocess.hpp"
 
 #include <string>
 

@@ -28,12 +28,12 @@ points ──► voxelize + sparse_encoder (CPU) ──── lidar_bev (1,256,1
 ## 三层架构（与 deploy/python 对应）
 
 Python 与 C++ 按同一三层结构组织（预处理 / 推理 / 后处理），C++ 推理用到的
-自定义算子集中在 `src/ops/`（头在 `include/dsb_infer/ops/`），其参考定义
+自定义算子集中在 `src/ops/`（头在 `include/ops/`），其参考定义
 （Python/CUDA 实现）见 `3rdparty/deeplearning/ops/`（bev_pool_v2 / voxel / iou3d）。
 
 | 层 | C++ 目录 / 文件 | Python 模块 | 职责 |
 | --- | --- | --- | --- |
-| 预处理 | `src/preprocess/preprocess.cpp`（头 `include/dsb_infer/preprocess/preprocess.hpp`） | `deploy/python/preprocess.py` | 加载导出输入、lidar 深度投影、点云体素化 |
+| 预处理 | `src/preprocess/preprocess.cpp`（头 `include/preprocess/preprocess.hpp`） | `deploy/python/preprocess.py` | 加载导出输入、lidar 深度投影、点云体素化 |
 | 推理 | `src/inference/`（inference.cpp + trt_engine.cpp） | `deploy/python/inference.py` + bev_pool_torch | TRT engine 编排（几何/bev_pool/降采样/稀疏编码走 `ops/`） |
 | 算子 | `src/ops/ops.cpp` | `3rdparty/deeplearning/ops/`（参考） | CPU 自定义算子：bev_pool / 体素化 / 稀疏卷积 |
 | 后处理 | `src/postprocess/postprocess.cpp` | `deploy/python/postprocess.py` | 检测解码（NMS + bbox coder + 过滤） |
@@ -90,7 +90,7 @@ python deploy/tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion
 deploy/cpp/
   CMakeLists.txt               # dsb_infer 工程
   README.md
-  include/dsb_infer/           # 公共头文件
+  include/           # 公共头文件
     config.hpp                 #   推理配置
     tensor.hpp                 #   张量封装
     pipeline.hpp               #   三层编排

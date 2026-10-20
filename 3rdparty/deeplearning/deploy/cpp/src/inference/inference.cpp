@@ -1,9 +1,9 @@
 // 模型推理层实现：TRT engine 编排 + CPU 自定义算子。
 // 镜像 Python 侧 deploy/inference.py（Inferencer）+ 部分 C++ ops。
 
-#include "dsb_infer/inference/inference.hpp"
+#include "inference/inference.hpp"
 
-#include "dsb_infer/ops/ops.hpp"
+#include "ops/ops.hpp"
 
 #include <algorithm>
 #include <cmath>

@@ -2,7 +2,7 @@
 // 镜像 Python 侧 TransFusionHead.get_bboxes（nms_type=None）+
 // TransFusionBBoxCoder.decode。
 
-#include "dsb_infer/postprocess/postprocess.hpp"
+#include "postprocess/postprocess.hpp"
 
 #include <algorithm>
 #include <cmath>

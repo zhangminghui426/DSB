@@ -1,6 +1,6 @@
 // DSB det C++ 推理入口（InferencePipeline 三层编排的薄 CLI）。
 
-#include "dsb_infer/pipeline.hpp"
+#include "pipeline.hpp"
 
 #include <cstdio>
 #include <string>

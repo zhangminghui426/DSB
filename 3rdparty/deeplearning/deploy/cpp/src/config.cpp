@@ -1,6 +1,6 @@
 // 部署配置解析：读取 tools/export_cpp_input.py 产出的 meta.txt。
 // 格式：key = 空格分隔值（'#' 注释），sparse / downsample 层表为结构化行。
-#include "dsb_infer/config.hpp"
+#include "config.hpp"
 
 #include <fstream>
 #include <sstream>

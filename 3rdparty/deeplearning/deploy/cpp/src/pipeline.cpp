@@ -1,7 +1,7 @@
 // 推理编排实现：Preprocessor -> Inferencer -> Postprocessor + verify/dump。
 // 镜像 Python 侧 deploy/pipeline.py（TrtPipeline）。
 
-#include "dsb_infer/pipeline.hpp"
+#include "pipeline.hpp"
 
 #include <cmath>
 #include <cstdio>
