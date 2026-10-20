@@ -15,8 +15,8 @@ DSB/
 │   │   └── deploy/          # TRT 推理部署
 │   │       ├── python/      # Python 部署包（preprocess/inference/postprocess 三层）
 │   │       ├── cpp/         # C++ 推理（同三层 + ops，参考 3rdparty/deeplearning/ops）
-│   │       ├── tools/       # C++ 输入导出 + trt_perf 性能分析
-│   │       └── launch/      # export/infer_trt/perf_trt/visualize_trt 启动脚本
+│   │       ├── tools/       # C++ 输入导出
+│   │       └── launch/      # export/infer_trt/visualize_trt 启动脚本
 │   └── fast_calib/          # 雷达-相机外参标定
 ├── packet/                  # Docker 安装包（CUDA/cuDNN/TensorRT）
 ├── Dockerfile / requirements.txt / docs/
@@ -84,9 +84,8 @@ cd 3rdparty/deeplearning/models/calib_board_detector && python train.py
 ## 详细文档
 
 - `3rdparty/deeplearning/README.md` — 模型库结构、训练/评估
-- `3rdparty/deeplearning/deploy/README.md` — TRT 部署（前置导出 / Python / C++ 推理 / 性能分析）
+- `3rdparty/deeplearning/deploy/README.md` — TRT 部署（前置导出 / Python / C++ 推理）
 - `3rdparty/deeplearning/deploy/cpp/README.md` — C++ 推理流水线、编译与运行
-- `3rdparty/deeplearning/deploy/tools/trt_perf/README.md` — TRT 逐层性能分析
 - `docs/MODEL_IO.md` — 模型 I/O 约定
 
 ## 已验证功能

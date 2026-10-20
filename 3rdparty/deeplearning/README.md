@@ -68,7 +68,7 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 ## 部署（ONNX 分模块导出 + TensorRT 推理）
 
 详见 [`deploy/README.md`](deploy/README.md)：前置导出（export.py，Python/C++
-共用）、Python/C++ 推理、启动脚本、性能分析与 TRT 版本说明。
+共用）、Python/C++ 推理、启动脚本与 TRT 版本说明。
 
 ```bash
 # 1. 前置导出：ONNX 分模块导出 + trtexec 构建 engine（Python/C++ 共用）

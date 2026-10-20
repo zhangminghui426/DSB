@@ -1,6 +1,6 @@
 # dsb_infer（C++ 推理，3rdparty/deeplearning/deploy/cpp）
 
-部署总览（前置导出 / Python 推理 / 启动脚本 / 性能分析）见
+部署总览（前置导出 / Python 推理 / 启动脚本）见
 [`../README.md`](../README.md)。
 
 C++ 端到端推理：加载 TRT engine，复用与 `deploy/python/pipeline.py` 相同的

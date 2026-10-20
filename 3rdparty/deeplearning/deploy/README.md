@@ -9,8 +9,8 @@ deploy/
 ├── export.py        # 前置导出：ONNX 分模块导出 + trtexec 构建 engine（Python/C++ 共用）
 ├── python/          # Python 推理包（deploy.python：preprocess/inference/postprocess 三层）
 ├── cpp/             # C++ 推理（dsb_infer，同三层 + ops，见 cpp/README.md）
-├── tools/           # export_cpp_input.py（C++ 输入导出）+ trt_perf（性能分析）
-└── launch/          # 部署启动脚本（export/infer_trt/visualize_trt/perf_trt）
+├── tools/           # export_cpp_input.py（C++ 输入导出）
+└── launch/          # 部署启动脚本（export/infer_trt/visualize_trt）
 ```
 
 ## 1. 前置导出（deploy/export.py）
@@ -73,21 +73,10 @@ inference / postprocess + ops）；输入文件由 `deploy/tools/export_cpp_inpu
 bash deploy/launch/export.sh det              # 前置导出（ONNX + engine）
 bash deploy/launch/infer_trt.sh det           # TRT 推理（--verify --checkpoint 透传）
 bash deploy/launch/visualize_trt.sh det       # 推理结果可视化（jpg/gif -> outputs/vis/）
-bash deploy/launch/perf_trt.sh det            # trtexec 逐层 profile -> outputs/perf/
 ```
 
 模型库训练/评估脚本仍在 `launch/`（prepare_data/train/eval/visualize），
 见上级目录 README。
-
-## 5. 性能分析（deploy/tools/trt_perf/）
-
-NVIDIA trt-perf-analysis 工具，生成逐层时延的交互式 HTML 报告。
-详见 [tools/trt_perf/README.md](tools/trt_perf/README.md)：
-
-```bash
-bash deploy/launch/perf_trt.sh det            # -> outputs/perf/layers_*.json + profile_*.json
-bash deploy/tools/trt_perf/run.sh             # -> outputs/perf/report/
-```
 
 ## TRT 版本说明
 
