@@ -84,14 +84,14 @@ cd 3rdparty/deeplearning/models/calib_board_detector && python train.py
 
 ## 详细文档
 
-- `3rdparty/deeplearning/README.md` — 模型库结构、训练/评估
-- `3rdparty/deeplearning/deploy/README.md` — TRT 部署（前置导出 / Python / C++ 推理）
-- `3rdparty/deeplearning/deploy/python/README.md` — Python TRT 推理（scripts/ 入口 + 库三层）
-- `3rdparty/deeplearning/deploy/cpp/README.md` — C++ 推理流水线、编译与运行
-- `3rdparty/fast_calib/README.md` — 雷达-相机外参标定
-- `tools/README.md` — 工程工具说明
-- `src/README.md` — ROS2 集成预留说明
-- `docs/MODEL_IO.md` — 模型 I/O 约定
+- [3rdparty/deeplearning/README.md](3rdparty/deeplearning/README.md) — 模型库结构、训练/评估
+- [3rdparty/deeplearning/deploy/README.md](3rdparty/deeplearning/deploy/README.md) — TRT 部署（前置导出 / Python / C++ 推理）
+- [3rdparty/deeplearning/deploy/python/README.md](3rdparty/deeplearning/deploy/python/README.md) — Python TRT 推理（scripts/ 入口 + 库三层）
+- [3rdparty/deeplearning/deploy/cpp/README.md](3rdparty/deeplearning/deploy/cpp/README.md) — C++ 推理流水线、编译与运行
+- [3rdparty/fast_calib/README.md](3rdparty/fast_calib/README.md) — 雷达-相机外参标定
+- [tools/README.md](tools/README.md) — 工程工具说明
+- [src/README.md](src/README.md) — ROS2 集成预留说明
+- [docs/MODEL_IO.md](docs/MODEL_IO.md) — 模型 I/O 约定
 
 ## 已验证功能
 
