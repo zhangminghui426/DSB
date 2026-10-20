@@ -4,8 +4,8 @@ Produces src/cpp_infer consumes:
   <out>/meta.json            geometry + structure + decode parameters
   <out>/inputs/img.bin       (6,3,256,704) fp32 normalized image (eval protocol)
   <out>/inputs/points.bin    int32 n + (n,5) fp32 lidar points (eval protocol)
-  <out>/inputs/matrices.bin  per camera: camera2lidar(4x4) camera_intrinsics(4x4)
-                             img_aug_matrix(4x4) lidar_aug_matrix(4x4) -> floats
+  <out>/inputs/matrices.bin  19x(4x4) float32 row-major: 6 camera2lidar +
+                             6 camera_intrinsics + 6 img_aug + 1 lidar_aug
   <out>/weights/sparse_encoder.bin  conv/bn params, concatenated (meta gives layout)
   <out>/weights/downsample.bin      vtransform downsample conv/bn params
   <out>/ref/decoder_feat.bin        (1,512,180,180) fp32 torch reference
@@ -194,12 +194,14 @@ def main():
     with open(osp.join(out, "inputs/points.bin"), "wb") as f:
         f.write(np.int32(len(pts)).tobytes())
         f.write(pts.tobytes())
-    mats = np.concatenate([
-        batch["camera2lidar"][0].detach().cpu().numpy(),
-        batch["camera_intrinsics"][0].detach().cpu().numpy(),
-        batch["img_aug_matrix"][0].detach().cpu().numpy(),
-        batch["lidar_aug_matrix"][0].detach().cpu().numpy(),
-    ], axis=0).astype(np.float32)  # (24,4,4)
+    cam2lidar = batch["camera2lidar"][0].detach().cpu().numpy()   # (N,4,4)
+    intrins = batch["camera_intrinsics"][0].detach().cpu().numpy()  # (N,4,4)
+    img_aug = batch["img_aug_matrix"][0].detach().cpu().numpy()   # (N,4,4)
+    lidar_aug = batch["lidar_aug_matrix"][0].detach().cpu().numpy()  # (4,4)
+    if lidar_aug.ndim == 2:
+        lidar_aug = lidar_aug[None]  # -> (1,4,4)
+    mats = np.concatenate([cam2lidar, intrins, img_aug, lidar_aug],
+                          axis=0).astype(np.float32)  # (19,4,4)
     dump_bin(osp.join(out, "inputs/matrices.bin"), mats)
 
     # ---- weights -----------------------------------------------------

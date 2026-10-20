@@ -21,8 +21,8 @@ deepleraing/
 │   └── calib_board_detector/  # 标定板检测器（SECOND）
 ├── datasets/          # 数据集与数据处理
 ├── scripts/           # 训练/评估/测试脚本（仅 .py）
-├── deploy/            # 导出/构建/推理包（export/builder/runtime/inferencer/config/graphs + bev_pool/lidar/preprocess + visualize）
-├── launch/            # shell 启动脚本（train/eval/export/infer_trt/perf_trt/visualize_trt）
+├── deploy/            # 导出/构建/推理包（export/builder/runtime/config/graphs + preprocess/inference/postprocess/pipeline）
+├── launch/            # shell 启动脚本（train/eval/export/infer_trt/perf_trt/visualize）
 ├── configs/           # 训练与部署配置
 ├── ops/               # 自定义 CUDA 算子（bev_pool_v2 / voxel / iou3d）
 ├── tools/             # 数据准备与输入导出工具
@@ -85,7 +85,7 @@ python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --task det --verify --fp16
 
 # 2. 保存解码结果
-python deploy/inferencer.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+python deploy/pipeline.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```
 
@@ -112,7 +112,7 @@ bash ../../tools/trt_perf/run.sh                   # 生成交互式 HTML 报告
 TRT 强类型说明（TRT >= 10.12 / 11.x）：精度由 ONNX 图表达（Cast/QDQ），
 `BuilderFlag.FP16/INT8` 已移除；FP32 ONNX 构建 FP32 engine。需要混合 FP16
 时先用 ModelOpt AutoCast（`pip install nvidia-modelopt`），或在
-`builder.py`/`inferencer.py` 加 `--autocast-fp16`。TRT < 10.12（docker 目标
+`builder.py`/`pipeline.py` 加 `--autocast-fp16`。TRT < 10.12（docker 目标
 10.9.0.34）自动回退弱类型，`--fp16` 照常生效（版本在构建时探测）。
 
 ## 推理结果可视化
@@ -151,4 +151,4 @@ outputs/vis/
 ## 子模块
 
 - `models/calib_board_detector/`：SECOND 标定板检测器（训练与推理，见
-  [`models/calib_board_detector/README.md`](models/calib_board_detector/README.md))
+  [`models/calib_board_detector/README.md`](models/calib_board_detector/README.md)）
