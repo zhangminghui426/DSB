@@ -1,7 +1,7 @@
 """Deployment configuration shared by export / build / infer entry points.
 
 One dataclass carries every path and precision knob used by the deploy
-package (deploy.export, deploy.builder, deploy.inferencer), so the three
+package (deploy.export, deploy.builder, deploy.pipeline), so the three
 CLIs agree on defaults and the runtime split stays consistent.
 """
 
