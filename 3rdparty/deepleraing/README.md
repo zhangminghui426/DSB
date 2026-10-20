@@ -81,32 +81,34 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 # 1. 导出 ONNX 并构建 TRT engine（一步完成；--verify 用 onnxruntime 逐图校验，
 #    需 pip install onnx onnxruntime；engine 构建只走 trtexec CLI，$TRTEXEC 或
 #    PATH，pip-only tensorrt 无 trtexec 时需 TRTEXEC=/path/to/TensorRT-10.9.../bin/trtexec）
-python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+python deploy/python/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --task det --verify --fp16
 
 # 2. 保存解码结果
-python deploy/pipeline.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+python deploy/python/pipeline.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```
 
-launch 启动脚本（`launch/`，与 `scripts/` 的 .py 分离）：
+launch 启动脚本：模型库脚本在 `launch/`（与 `scripts/` 的 .py 分离），
+TRT 推理部署脚本在 `deploy/launch/`（与 `deploy/python`、`deploy/cpp` 同属
+`deploy/`，本目录内调用）：
 
 ```bash
 launch/prepare_data.sh            # 数据软链接 + infos pkl 生成
 launch/train.sh det               # 训练（det|seg|multitask|occ|m0|stereo|stbase）
 launch/eval.sh det                # 评估
 launch/visualize.sh det           # 可视化
-launch/export.sh det              # 导出 ONNX
-launch/infer_trt.sh det           # TRT 推理（加 --build --fp16 --verify 透传）
-launch/visualize_trt.sh det       # TRT 推理结果可视化（jpg/gif -> outputs/vis/）
-launch/perf_trt.sh det            # trtexec 采集逐层 profile -> outputs/perf/
+bash deploy/launch/export.sh det              # 导出 ONNX
+bash deploy/launch/infer_trt.sh det           # TRT 推理（加 --build --fp16 --verify 透传）
+bash deploy/launch/visualize_trt.sh det       # TRT 推理结果可视化（jpg/gif -> outputs/vis/）
+bash deploy/launch/perf_trt.sh det            # trtexec 采集逐层 profile -> outputs/perf/
 ```
 
-性能分析（NVIDIA trt-perf-analysis 工具随仓库分发到 `tools/trt_perf/`）：
+性能分析（NVIDIA trt-perf-analysis 工具随仓库分发到 `deploy/tools/trt_perf/`）：
 
 ```bash
-bash launch/perf_trt.sh det                        # -> outputs/perf/layers_*.json + profile_*.json
-bash ../../tools/trt_perf/run.sh                   # 生成交互式 HTML 报告 -> outputs/perf/report/
+bash deploy/launch/perf_trt.sh det            # -> outputs/perf/layers_*.json + profile_*.json
+bash deploy/tools/trt_perf/run.sh             # 生成交互式 HTML 报告 -> outputs/perf/report/
 ```
 
 TRT 强类型说明（TRT >= 10.12 / 11.x）：精度由 ONNX 图表达（Cast/QDQ），
@@ -121,13 +123,13 @@ TRT 推理结果渲染到 `outputs/vis/`（与模型/ckpt 目录分离，jpg + g
 
 ```bash
 # 现场跑 TRT 推理并可视化：单帧（BEV + 6 相机投影 jpg）
-launch/visualize_trt.sh --sample-index 5
+bash deploy/launch/visualize_trt.sh --sample-index 5
 
 # 多帧时间序列：连续渲染 10 帧（同一场景连续 sweep），另存 seq gif
-launch/visualize_trt.sh --sample-index 5 --frames 10 --fps 4
+bash deploy/launch/visualize_trt.sh --sample-index 5 --frames 10 --fps 4
 
 # 复用已 dump 的 npz（跳过模型推理，仅渲染；checkpoint 可省略，单帧）
-python deploy/visualize.py configs/det_convfuser.py \
+python deploy/python/visualize.py configs/det_convfuser.py \
     --npz outputs/trt/sample5.npz --sample-index 5 --out outputs/vis
 ```
 

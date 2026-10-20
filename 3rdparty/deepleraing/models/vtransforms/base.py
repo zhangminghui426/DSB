@@ -101,7 +101,7 @@ class BaseTransform(nn.Module):
         # fp32 geometry (inverse/matmul precision matters here)
         device = camera2lidar_trans.device
         # ONNX has no matrix-inverse op: callers may pass precomputed
-        # post_rots_inv / intrins_inv (deploy/export path)
+        # post_rots_inv / intrins_inv (deploy/python/export path)
         post_rots_inv = kwargs.get("post_rots_inv", None)
         intrins_inv = kwargs.get("intrins_inv", None)
         with torch.autocast(device_type=device.type, enabled=False):
