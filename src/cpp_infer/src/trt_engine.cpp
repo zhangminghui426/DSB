@@ -1,88 +1,104 @@
-#include "dsb_infer/inference.hpp"
-#include "dsb_infer/ops.hpp"
+#include "dsb_infer/trt_engine.hpp"
 
-#include <cuda_runtime_api.h>
 #include <NvInfer.h>
+#include <cuda_runtime_api.h>
 
+#include <cstdio>
 #include <fstream>
-#include <iostream>
-#include <stdexcept>
-#include <vector>
+#include <memory>
 
 namespace dsb {
 
-using nvinfer1::Dims;
-using nvinfer1::Dims2;
-using nvinfer1::Dims4;
-
-TrtEngine::TrtEngine(const std::string &path, int device) : dev_(device) {
-  if (cudaSetDevice(dev_) != cudaSuccess)
-    throw std::runtime_error("cudaSetDevice failed");
-  std::ifstream f(path, std::ios::binary);
-  if (!f) throw std::runtime_error("cannot open engine: " + path);
-  std::string data((std::istreambuf_iterator<char>(f)),
-                   std::istreambuf_iterator<char>());
-  runtime_.reset(nvinfer1::createInferRuntime(logger_));
-  engine_.reset(runtime_->deserializeCudaEngine(data.data(), data.size()));
-  if (!engine_) throw std::runtime_error("failed to deserialize: " + path);
-  context_ = std::unique_ptr<nvinfer1::IExecutionContext>(
-      engine_->createExecutionContext());
-  if (!context_)
-    throw std::runtime_error("failed to create context: " + path);
-}
-
-void TrtEngine::run(const std::vector<Tensor> &inputs,
-                    std::vector<Tensor> &outputs) {
-  if (inputs.size() != input_names_.size())
-    throw std::runtime_error("input count mismatch");
-  if (outputs.size() != output_names_.size())
-    throw std::runtime_error("output count mismatch");
-
-  // fixed-shape engines: pin each I/O dims from the ONNX batch-1 shapes.
-  std::vector<void *> bindings;
-  for (size_t i = 0; i < input_names_.size(); ++i) {
-    const auto *dims = context_->getBindingShape(i);
-    const Tensor &t = inputs[i];
-    if ((int)t.shape.size() != dims->nbDims) {
-      // camera.backbone img is (B, N, C, H, W); engine binding is (B*N, C, H, W)
-      if (dims->nbDims == 4 && t.shape.size() == 5) {
-        bindings.push_back(t.data.data());
-        continue;
-      }
-      throw std::runtime_error("input rank mismatch");
-    }
-    bindings.push_back(t.data.data());
+namespace {
+// TRT logger: keep quiet unless errors.
+class Logger : public nvinfer1::ILogger {
+  void log(Severity sev, const char *msg) noexcept override {
+    if (sev == Severity::kERROR || sev == Severity::kINTERNAL_ERROR)
+      std::fprintf(stderr, "[trt] %s\n", msg);
   }
-  size_t offset = input_names_.size();
-  for (size_t i = 0; i < output_names_.size(); ++i)
-    bindings.push_back(outputs[i].data.data());
-  (void)offset;
+};
+Logger g_logger;
 
-  if (!context_->executeV2(bindings.data()))
+// RAII stream.
+struct CudaStream {
+  cudaStream_t s = nullptr;
+  CudaStream() { cudaStreamCreate(&s); }
+  ~CudaStream() { if (s) cudaStreamDestroy(s); }
+};
+}  // namespace
+
+struct TrtEngine::Impl {
+  std::unique_ptr<nvinfer1::ICudaEngine> engine;
+  std::unique_ptr<nvinfer1::IExecutionContext> ctx;
+  std::unique_ptr<CudaStream> stream;
+};
+
+TrtEngine::TrtEngine(const std::string &engine_path) : impl_(new Impl) {
+  std::ifstream f(engine_path, std::ios::binary);
+  if (!f) throw std::runtime_error("cannot open engine: " + engine_path);
+  std::vector<char> buf((std::istreambuf_iterator<char>(f)),
+                        std::istreambuf_iterator<char>());
+  auto runtime = std::unique_ptr<nvinfer1::IRuntime>(
+      nvinfer1::createInferRuntime(g_logger));
+  impl_->engine.reset(runtime->deserializeCudaEngine(buf.data(), buf.size()));
+  if (!impl_->engine)
+    throw std::runtime_error("failed to deserialize engine: " + engine_path);
+  impl_->ctx.reset(impl_->engine->createExecutionContext());
+  impl_->stream.reset(new CudaStream);
+}
+
+TrtEngine::~TrtEngine() { delete impl_; }
+
+std::map<std::string, Tensor> TrtEngine::run(
+    const std::map<std::string, Tensor> &inputs) {
+  std::map<std::string, Tensor> outputs;
+  std::vector<std::unique_ptr<void, decltype(&cudaFree)>> dev;
+  auto alloc = [&](size_t bytes) {
+    void *p = nullptr;
+    cudaMalloc(&p, bytes);
+    dev.emplace_back(p, &cudaFree);
+    return p;
+  };
+
+  nvinfer1::IExecutionContext *ctx = impl_->ctx.get();
+  for (int i = 0; i < impl_->engine->getNbIOTensors(); ++i) {
+    const char *name = impl_->engine->getIOTensorName(i);
+    nvinfer1::TensorIOMode mode = impl_->engine->getTensorIOMode(name);
+    if (mode == nvinfer1::TensorIOMode::kINPUT) {
+      const Tensor &t = inputs.at(name);
+      void *d = alloc(t.data.size() * sizeof(float));
+      cudaMemcpy(d, t.data.data(), t.data.size() * sizeof(float),
+                 cudaMemcpyHostToDevice);
+      ctx->setTensorAddress(name, d);
+    } else {
+      nvinfer1::Dims dims = impl_->engine->getTensorShape(name);
+      std::vector<int64_t> shape(dims.nbDims);
+      for (int d = 0; d < dims.nbDims; ++d) shape[d] = dims.d[d];
+      Tensor t(shape);
+      void *d = alloc(t.data.size() * sizeof(float));
+      ctx->setTensorAddress(name, d);
+      outputs[name] = std::move(t);
+    }
+  }
+  if (!ctx->executeAsyncV3(impl_->stream->s)) {
+    cudaStreamSynchronize(impl_->stream->s);
     throw std::runtime_error("engine execute failed");
-}
+  }
+  cudaStreamSynchronize(impl_->stream->s);
 
-void TrtEngine::setTensorAddresses(const std::vector<void *> &ptrs) {
-  for (size_t i = 0; i < input_names_.size(); ++i)
-    context_->setTensorAddress(input_names_[i].c_str(), ptrs[i]);
-  for (size_t i = 0; i < output_names_.size(); ++i)
-    context_->setTensorAddress(output_names_[i].c_str(),
-                               ptrs[input_names_.size() + i]);
-}
-
-std::vector<Dims> TrtEngine::inputShapes() const {
-  std::vector<Dims> shapes;
-  for (size_t i = 0; i < input_names_.size(); ++i)
-    shapes.push_back(context_->getBindingShape((int)i));
-  return shapes;
-}
-
-std::vector<Dims> TrtEngine::outputShapes() const {
-  std::vector<Dims> shapes;
-  for (size_t i = 0; i < output_names_.size(); ++i)
-    shapes.push_back(context_->getBindingShape(
-        (int)(input_names_.size() + i)));
-  return shapes;
+  // copy outputs back
+  int idx = 0;
+  for (int i = 0; i < impl_->engine->getNbIOTensors(); ++i) {
+    const char *name = impl_->engine->getIOTensorName(i);
+    if (impl_->engine->getTensorIOMode(name) ==
+        nvinfer1::TensorIOMode::kINPUT)
+      continue;
+    cudaMemcpy(outputs[name].data.data(), dev[idx], outputs[name].data.size() *
+                                                         sizeof(float),
+               cudaMemcpyDeviceToHost);
+    ++idx;
+  }
+  return outputs;
 }
 
 }  // namespace dsb
