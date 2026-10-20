@@ -61,8 +61,9 @@ std::map<std::string, Tensor> TrtEngine::run(
   };
 
   nvinfer1::IExecutionContext *ctx = impl_->ctx.get();
-  // V3 API: name -> device address for all I/O tensors.
-  std::vector<nvinfer1::IExecutionContext::IOBindingEntry> bindings;
+  // TRT 10.x V3 API: bind addresses via setTensorAddress, then enqueueV3(stream).
+  // (enqueueV3(stream, IOBindingEntry) overload only exists from TRT 10.11+.)
+  std::map<std::string, void *> out_dev;
   for (int i = 0; i < impl_->engine->getNbIOTensors(); ++i) {
     const char *name = impl_->engine->getIOTensorName(i);
     nvinfer1::TensorIOMode mode = impl_->engine->getTensorIOMode(name);
@@ -71,30 +72,28 @@ std::map<std::string, Tensor> TrtEngine::run(
       void *d = alloc(t.data.size() * sizeof(float));
       cudaMemcpy(d, t.data.data(), t.data.size() * sizeof(float),
                  cudaMemcpyHostToDevice);
-      bindings.push_back({name, d});
+      ctx->setTensorAddress(name, d);
     } else {
       nvinfer1::Dims dims = impl_->engine->getTensorShape(name);
       std::vector<int64_t> shape(dims.nbDims);
       for (int d = 0; d < dims.nbDims; ++d) shape[d] = dims.d[d];
       Tensor t(shape);
       void *d = alloc(t.data.size() * sizeof(float));
+      ctx->setTensorAddress(name, d);
       outputs[name] = std::move(t);
-      bindings.push_back({name, d});
+      out_dev[name] = d;
     }
   }
-  if (!ctx->enqueueV3(impl_->stream->s, bindings)) {
+  if (!ctx->enqueueV3(impl_->stream->s)) {
     cudaStreamSynchronize(impl_->stream->s);
     throw std::runtime_error("engine execute failed");
   }
   cudaStreamSynchronize(impl_->stream->s);
 
   // copy outputs back
-  for (const auto &b : bindings) {
-    if (impl_->engine->getTensorIOMode(b.tensorName) ==
-        nvinfer1::TensorIOMode::kINPUT)
-      continue;
-    cudaMemcpy(outputs[b.tensorName].data.data(), b.device,
-               outputs[b.tensorName].data.size() * sizeof(float),
+  for (const auto &kv : out_dev) {
+    cudaMemcpy(outputs[kv.first].data.data(), kv.second,
+               outputs[kv.first].data.size() * sizeof(float),
                cudaMemcpyDeviceToHost);
   }
   return outputs;
