@@ -105,6 +105,32 @@ Inferencer::Inferencer(const Config &cfg) : cfg_(cfg) {
   cudaMalloc(&ds_a_, bev_n * sizeof(float));
   cudaMalloc(&ds_b_, bev_n * sizeof(float));
   cudaMalloc(&ds_out_, bev_n * sizeof(float));
+
+  // ---- lidar 稀疏链缓冲（体素数/通道按 meta 上限预分配） ----
+  if (!cfg_.sparse_layers.empty()) {
+    int max_c = 0;
+    for (const auto &ly : cfg_.sparse_layers)
+      max_c = std::max(max_c, std::max(ly.in_c, ly.out_c));
+    const size_t sv = (size_t)cfg_.lidar_max_voxels * max_c;
+    cudaMalloc(&sparse_cur_, sv * sizeof(float));
+    cudaMalloc(&sparse_nxt_, sv * sizeof(float));
+    cudaMalloc(&sparse_raw_, sv * sizeof(float));
+    cudaMalloc(&sparse_coords_, (size_t)cfg_.lidar_max_voxels * 3 * sizeof(int));
+    cudaMalloc(&sparse_counter_, sizeof(int));
+    hash_size_ = 1;
+    // strided pass1 输入/输出 key 同表共存，取 4x 负载 ≤ 50%
+    while (hash_size_ < (int)(4 * cfg_.lidar_max_voxels)) hash_size_ <<= 1;
+    cudaMalloc(&sparse_hash_keys_, (size_t)hash_size_ * sizeof(long long));
+    cudaMalloc(&sparse_hash_idx_, (size_t)hash_size_ * sizeof(int));
+    cudaMalloc(&sparse_out_hash_keys_, (size_t)hash_size_ * sizeof(long long));
+    cudaMalloc(&sparse_out_hash_idx_, (size_t)hash_size_ * sizeof(int));
+    // 稠密化输出
+    const int X = cfg_.sparse_out[0], Y = cfg_.sparse_out[1],
+              Z = cfg_.sparse_out[2];
+    const int C_final = cfg_.sparse_layers.back().out_c;
+    cudaMalloc(&lidar_bev_buf_,
+               (size_t)C_final * Z * X * Y * sizeof(float));
+  }
 }
 
 Inferencer::~Inferencer() {
@@ -116,6 +142,19 @@ Inferencer::~Inferencer() {
   cudaFree(ds_out_);
   cudaFree(blob_ds_);
   cudaFree(layers_dev_);
+  cudaFree(blob_sparse_);
+  cudaFree(sparse_layers_dev_);
+  cudaFree(sparse_offsets_dev_);
+  cudaFree(sparse_cur_);
+  cudaFree(sparse_nxt_);
+  cudaFree(sparse_raw_);
+  cudaFree(sparse_coords_);
+  cudaFree(sparse_counter_);
+  cudaFree(sparse_hash_keys_);
+  cudaFree(sparse_hash_idx_);
+  cudaFree(sparse_out_hash_keys_);
+  cudaFree(sparse_out_hash_idx_);
+  cudaFree(lidar_bev_buf_);
   cudaStreamDestroy(stream_);
 }
 
@@ -144,6 +183,39 @@ void Inferencer::load_weights(const std::string &input_dir) {
                    (long long)ly.b_len, ly.bn_eps};
     }
     cudaMemcpy(layers_dev_, layers.data(), n * sizeof(CudaDownsampleLayer),
+               cudaMemcpyHostToDevice);
+  }
+
+  // ---- 稀疏链：权重 blob + 层表 + offsets 上设备 ----
+  if (!cfg_.sparse_layers.empty()) {
+    cudaMalloc(&blob_sparse_, sparse_blob_.size() * sizeof(float));
+    cudaMemcpy(blob_sparse_, sparse_blob_.data(),
+               sparse_blob_.size() * sizeof(float), cudaMemcpyHostToDevice);
+    const int ns = (int)cfg_.sparse_layers.size();
+    std::vector<CudaSparseLayer> sl(ns);
+    long long off_acc = 0;
+    for (int i = 0; i < ns; ++i) {
+      const auto &ly = cfg_.sparse_layers[i];
+      sl[i] = {ly.type == "strided" ? 1 : 0, ly.in_c, ly.out_c,
+               (int)ly.offsets.size(), (long long)ly.w_off, (long long)ly.w_len,
+               (long long)ly.b_len, ly.bn_eps,
+               ly.stride[0], ly.stride[1], ly.stride[2],
+               ly.pad[0], ly.pad[1], ly.pad[2], off_acc};
+      off_acc += (long long)ly.offsets.size() * 3;
+    }
+    cudaMalloc(&sparse_layers_dev_, ns * sizeof(CudaSparseLayer));
+    cudaMemcpy(sparse_layers_dev_, sl.data(), ns * sizeof(CudaSparseLayer),
+               cudaMemcpyHostToDevice);
+    std::vector<int> offs((size_t)off_acc);
+    long long o = 0;
+    for (const auto &ly : cfg_.sparse_layers)
+      for (const auto &off : ly.offsets) {
+        offs[o++] = off[0];
+        offs[o++] = off[1];
+        offs[o++] = off[2];
+      }
+    cudaMalloc(&sparse_offsets_dev_, offs.size() * sizeof(int));
+    cudaMemcpy(sparse_offsets_dev_, offs.data(), offs.size() * sizeof(int),
                cudaMemcpyHostToDevice);
   }
 }
@@ -249,19 +321,61 @@ Tensor Inferencer::camera_bev(const Tensor &depthnet,
 }
 
 Tensor Inferencer::lidar_branch(const Preprocessor::Inputs &in) const {
-  std::printf("[dsb] voxelize + sparse encoder ...\n");
+  std::printf("[dsb] voxelize + sparse encoder (cuda) ...\n");
   Clock::time_point t0 = Clock::now();
   Tensor vfeats, vcoords, vsizes;
   Preprocessor(cfg_).voxelize(in, vfeats, vcoords, vsizes);
   Clock::time_point t1 = Clock::now();
   std::printf("[dsb] [time]   %-20s %8.2f ms\n", "voxelize", ms(t0, t1));
-  Tensor lidar_bev = sparse_encoder_forward(cfg_, vfeats, vcoords, vsizes,
-                                            sparse_blob_);
+
+  // ---- mean reduce（体素数少，留在 CPU；与 CPU 参考一致）----
+  const int nvox = (int)vcoords.shape[0];
+  const int feats_dim = (int)vfeats.shape[1];
+  std::vector<float> cur_h((size_t)nvox * feats_dim);
+  {
+    int r = 0;
+    for (int v = 0; v < nvox; ++v) {
+      const int cnt = (int)std::lround(vsizes.data[v]);
+      for (int d = 0; d < feats_dim; ++d) {
+        double s = 0;
+        for (int i = 0; i < cnt; ++i)
+          s += vfeats.data[(size_t)(r + i) * feats_dim + d];
+        cur_h[(size_t)v * feats_dim + d] = (float)(s / std::max(cnt, 1));
+      }
+      r += cnt;
+    }
+  }
+
+  // ---- 坐标 int 化 + 上设备 -> CUDA 稀疏链 -> 拷回 host ----
+  std::vector<int> coords_h((size_t)nvox * 3);
+  for (int v = 0; v < nvox; ++v)
+    for (int d = 0; d < 3; ++d)
+      coords_h[(size_t)v * 3 + d] = (int)std::lround(vcoords.data[v * 4 + d]);
+  cudaMemcpyAsync(sparse_cur_, cur_h.data(), cur_h.size() * sizeof(float),
+                  cudaMemcpyHostToDevice, stream_);
+  cudaMemcpyAsync(sparse_coords_, coords_h.data(),
+                  coords_h.size() * sizeof(int), cudaMemcpyHostToDevice,
+                  stream_);
+  const int X = cfg_.sparse_out[0], Y = cfg_.sparse_out[1],
+            Z = cfg_.sparse_out[2];
+  const int C_final = (int)cfg_.sparse_layers.back().out_c;
+  cuda_sparse_encode(
+      sparse_layers_dev_, (int)cfg_.sparse_layers.size(), blob_sparse_,
+      sparse_offsets_dev_, sparse_cur_, nvox, feats_dim, sparse_coords_,
+      lidar_bev_buf_, X, Y, Z, sparse_cur_, sparse_nxt_, sparse_raw_,
+      sparse_hash_keys_, sparse_hash_idx_, sparse_out_hash_keys_,
+      sparse_out_hash_idx_, hash_size_, sparse_coords_, sparse_counter_,
+      stream_);
+  cudaStreamSynchronize(stream_);
+  Tensor lidar_bev({(int64_t)C_final * Z, X, Y});
+  cudaMemcpy(lidar_bev.data.data(), lidar_bev_buf_,
+             lidar_bev.data.size() * sizeof(float), cudaMemcpyDeviceToHost);
   Clock::time_point t2 = Clock::now();
-  std::printf("[dsb] [time]   %-20s %8.2f ms\n", "sparse_encoder", ms(t1, t2));
+  std::printf("[dsb] [time]   %-20s %8.2f ms\n", "sparse_encoder (cuda)",
+              ms(t1, t2));
   std::printf("[dsb]   lidar_bev %ldx%ldx%ld (voxels %ld)\n",
               (long)lidar_bev.shape[0], (long)lidar_bev.shape[1],
-              (long)lidar_bev.shape[2], (long)vcoords.shape[0]);
+              (long)lidar_bev.shape[2], (long)nvox);
   return lidar_bev;
 }
 

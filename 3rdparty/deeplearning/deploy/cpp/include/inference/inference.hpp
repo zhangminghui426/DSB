@@ -57,6 +57,19 @@ class Inferencer {
   float *ds_a_ = nullptr, *ds_b_ = nullptr, *ds_out_ = nullptr;
   float *blob_ds_ = nullptr;        // downsample 权重（设备端）
   CudaDownsampleLayer *layers_dev_ = nullptr;
+  // lidar 稀疏链
+  float *blob_sparse_ = nullptr;    // sparse 权重（设备端）
+  CudaSparseLayer *sparse_layers_dev_ = nullptr;
+  int *sparse_offsets_dev_ = nullptr;   // 所有层 offsets 打包（K*3 int/层）
+  float *sparse_cur_ = nullptr, *sparse_nxt_ = nullptr, *sparse_raw_ = nullptr;
+  float *lidar_bev_buf_ = nullptr;  // (C_final*Z, X, Y)
+  int *sparse_coords_ = nullptr;    // (max_voxels*3) 输出 coords
+  int *sparse_counter_ = nullptr;
+  long long *sparse_hash_keys_ = nullptr;
+  int *sparse_hash_idx_ = nullptr;
+  long long *sparse_out_hash_keys_ = nullptr;  // strided 输出 hash（独立表）
+  int *sparse_out_hash_idx_ = nullptr;
+  int hash_size_ = 0;
 };
 
 }  // namespace dsb

@@ -42,18 +42,23 @@ Python 与 C++ 按同一三层结构组织（预处理 / 推理 / 后处理）�
 ## CUDA 自定义算子（src/ops/cuda_kernels.cu）
 
 参考 NVIDIA-AI-IOT/Lidar_AI_Solution 的 CUDA-BEVFusion kernel 组织方式，
-把 camera 链的 CPU 串行循环（此前 downsample_conv ≈ 120s、sparse_encoder ≈ 14.5s）
-替换为独立 `.cu` kernel，与 TRT engine 共用同一个 CUDA stream 串行执行：
+把 CPU 串行循环（此前 downsample_conv ≈ 120s、sparse_encoder ≈ 14.5s）替换为
+独立 `.cu` kernel，与 TRT engine 共用同一个 CUDA stream 串行执行：
 
 | kernel | 替代的 CPU 步骤 | 说明 |
 | --- | --- | --- |
 | `geometry_kernel` | `compute_geometry` | 每线程一个 frustum 点 × 6 相机，反投影到 lidar 系 |
 | `fold_bevpool_kernel` | `fold_depth_features` + `bev_pool` | 深度 softmax 折入特征 + 网格量化 + `atomicAdd` 求和（合并两步、免中间张量） |
 | `downsample_kernel` | `downsample_conv` | 逐层 3×3 conv + BN + ReLU |
+| `sparse_subm_kernel` / `sparse_strided_pass{1,2}` + `sparse_bn_relu_kernel` | `sparse_encoder_forward`（subm / strided 稀疏卷积） | 坐标 hash 表（开放寻址）查邻居；strided 独立输出表唯一化 + 原子累加 |
+| `sparse_densify_kernel` | 稀疏输出稠密化 | 网格点查最后一层 hash，写 `(C*Z, X, Y)` |
 
-- 数值语义与 `src/ops/ops.cpp` 的 CPU 参考逐位对齐（rank 求和、无归一化）。
+- 数值语义与 `src/ops/ops.cpp` 的 CPU 参考逐位对齐（rank 求和、无归一化；
+  稀疏卷积含 bias + BN + ReLU）。坐标 key 加 4096 偏移保证非负，避免与
+  hash 空哨兵（-1）冲突（越界邻居坐标会为负）。
 - `TrtEngine::run(..., stream)` 以 `cudaMemcpyAsync` + `enqueueV3` 在外部 stream 上
-  异步执行，与 kernel 同流串行；`camera_bev` 链结束后统一 `cudaStreamSynchronize`。
+  异步执行，与 kernel 同流串行；`camera_bev` / `lidar_branch` 链结束后统一
+  `cudaStreamSynchronize`。
 - 构建需要 CUDA toolkit（`check_language(CUDA)`，缺 CUDA 直接报错）。
 
 ## 构建（仓库根 DSB/ 下）
@@ -134,6 +139,6 @@ deploy/cpp/
 3. **9 个 head 输出**：`head.bbox` 输出 8 个 pred tensor + `query_labels`
    （float 承载 proposal 类别 id，来自图内 topk，解码时转 int）。tensor 名以
    `deploy/python/graphs.py` 为准。
-4. **lidar 分支（体素化 + 稀疏编码）仍是 CPU**：`voxelize`/`sparse_encoder`
-   尚未 CUDA 化（下一步，参考 CUDA-BEVFusion 的 lidar-voxelization.cu）。
+4. **体素化（voxelize）与均值化（mean reduce）仍在 CPU**：约 30ms，量级小；
+   稀疏卷积与稠密化已走 CUDA（原 sparse_encoder 约 14.5s → GPU）。
 5. **CMake 需要 TensorRT 与 CUDA**：`-DTENSORRT_ROOT` 指向 TRT 安装目录。
