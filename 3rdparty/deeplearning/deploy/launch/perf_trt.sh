@@ -54,6 +54,16 @@ for g in $GRAPHS; do
     "error: layers_$g.json not produced (trtexec --exportLayerInfo failed)" >&2; exit 2; }
   [ -f "$PERF_DIR/profile_$g.json" ] || { echo \
     "error: profile_$g.json not produced (trtexec --exportProfile failed)" >&2; exit 2; }
+  # detailed verbosity 检查：layer_names_only 构建的 engine，--exportLayerInfo
+  # 只导出层名字符串数组（{"Layers": ["name", ...]}），无法生成 trt_perf 报告；
+  # 需用最新 builder（--profilingVerbosity=detailed）重建 engine。
+  if python3 -c "import json,sys;d=json.load(open('$PERF_DIR/layers_$g.json'));\
+sys.exit(0 if isinstance(d,dict) and isinstance(d.get('Layers'),list) and d['Layers'] and isinstance(d['Layers'][0],str) else 1)" 2>/dev/null; then
+    echo "error: layers_$g.json 仅含层名（engine 以 layer_names_only 构建）。" >&2
+    echo "  请用最新 builder 重建 engine 后再采集：" >&2
+    echo "  python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task $TASK --fp16" >&2
+    exit 2
+  fi
   echo "[perf] dumped $g -> layers_$g.json / profile_$g.json"
 done
 
