@@ -24,6 +24,11 @@ import os
 import os.path as osp
 import sys
 
+# deepleraing holds datasets/models/scripts/configs; allow running this script
+# from the repo root with bare relative paths like configs/det_convfuser.py.
+_DL_ROOT = osp.join(osp.dirname(osp.abspath(__file__)), "..", "3rdparty",
+                    "deepleraing")
+sys.path.insert(0, _DL_ROOT)
 sys.path.insert(0, osp.join(osp.dirname(osp.abspath(__file__)), ".."))
 
 import numpy as np
@@ -151,9 +156,13 @@ def main():
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
-    cfg = load_config(args.config)
+    # resolve bare repo-root relative paths against 3rdparty/deepleraing
+    def resolve(p):
+        return p if osp.exists(p) else osp.join(_DL_ROOT, p)
+
+    cfg = load_config(resolve(args.config))
     model = build_model(cfg.model).cuda().eval()
-    load_model_checkpoint(model, args.checkpoint, strict=True)
+    load_model_checkpoint(model, resolve(args.checkpoint), strict=True)
 
     ds = build_dataset(cfg.data.val)
     sample = ds[args.sample_index]

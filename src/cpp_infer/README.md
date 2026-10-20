@@ -32,11 +32,11 @@ make -j
 
 ## 运行
 
-输入文件用 `tools/export_cpp_input.py` 从一张 val 样本导出：
+输入文件用 `tools/export_cpp_input.py` 从一张 val 样本导出（从仓库根运行）：
 
 ```bash
 python tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-    --index 5 --out outputs/cpp_input
+    --sample-index 5 --out-dir outputs/cpp_input
 ```
 
 ```bash
