@@ -128,10 +128,10 @@ Tensor compute_geometry(const Config &cfg, const std::vector<Mat4> &camera2lidar
 // 镜像 BaseTransform.bev_pool（CUDA kernel 等价）：网格量化、范围过滤、
 // 按 rank 分段求和（与 kernel 相同的精确 float 求和）。
 Tensor bev_pool(const Config &cfg, const Tensor &geom, const Tensor &x) {
-  // geom: (N, D, fH, fW, 3)；x: (N, D, fH, fW, C)
+  // geom: (N, D, fH, fW, 3)；x: (B, N, D, fH, fW, C)
   const int D = (int)geom.shape[1], fH = (int)geom.shape[2],
             fW = (int)geom.shape[3];
-  const int C = (int)x.shape[4];
+  const int C = (int)x.shape[5];  // 特征通道在最后一维（shape[4] 是 fW）
   const int nx0 = cfg.nx[0], nx1 = cfg.nx[1], nx2 = cfg.nx[2];
   const float bx = cfg.xbound[0], by = cfg.ybound[0], bz = cfg.zbound[0];
   const float dx = cfg.xbound[2], dy = cfg.ybound[2], dz = cfg.zbound[2];
