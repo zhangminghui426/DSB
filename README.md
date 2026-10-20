@@ -91,7 +91,7 @@ cd 3rdparty/deeplearning/models/calib_board_detector && python train.py
 - [3rdparty/fast_calib/README.md](3rdparty/fast_calib/README.md) — 雷达-相机外参标定
 - [tools/README.md](tools/README.md) — 工程工具说明
 - [src/README.md](src/README.md) — ROS2 集成预留说明
-- [docs/MODEL_IO.md](docs/MODEL_IO.md) — 模型 I/O 约定
+- [3rdparty/deeplearning/docs/MODEL_IO.md](3rdparty/deeplearning/docs/MODEL_IO.md) — 模型 I/O 约定
 
 ## 已验证功能
 
