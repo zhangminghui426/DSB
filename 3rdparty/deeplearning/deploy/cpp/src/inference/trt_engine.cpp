@@ -1,4 +1,4 @@
-#include "inference/trt_engine.hpp"
+#include "dsb_infer/inference/trt_engine.hpp"
 
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>

@@ -76,7 +76,7 @@ python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --task det --verify --fp16
 
 # 2. TRT 推理（直接用 engine，不需要 .pth；对照 torch 加 --checkpoint ... --verify）
-python deploy/python/pipeline.py configs/det_convfuser.py \
+python deploy/python/scripts/pipeline.py configs/det_convfuser.py \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```
 

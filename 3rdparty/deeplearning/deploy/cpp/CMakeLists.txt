@@ -40,24 +40,21 @@ else()
   set(DSB_HAVE_OPENCV FALSE)
 endif()
 
-# 三层结构（与 deploy/python 对应）：
-#   preprocess/  预处理层（深度投影 / 体素化）
-#   inference/   推理层（TRT engine 编排 + trt_engine）
-#   ops/         自定义算子（CPU 实现，对应 3rdparty/deeplearning/ops 参考）
-#   postprocess/ 后处理层（解码 + NMS）
-#   pipeline/config/tensor/main 为编排与基础设施
+# 标准工程布局（与 deploy/python 三层对应）：
+#   include/dsb_infer/  公共头文件（preprocess/inference/ops/postprocess + 基础设施）
+#   src/                实现（main/pipeline/config + 四层同名 .cpp）
 add_executable(dsb_infer
-  main.cpp
-  pipeline.cpp
-  config.cpp
-  preprocess/preprocess.cpp
-  inference/inference.cpp
-  inference/trt_engine.cpp
-  ops/ops.cpp
-  postprocess/postprocess.cpp
+  src/main.cpp
+  src/pipeline.cpp
+  src/config.cpp
+  src/preprocess/preprocess.cpp
+  src/inference/inference.cpp
+  src/inference/trt_engine.cpp
+  src/ops/ops.cpp
+  src/postprocess/postprocess.cpp
 )
 target_include_directories(dsb_infer PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${TENSORRT_INCLUDE_DIR}
 )
 target_link_libraries(dsb_infer PRIVATE ${TENSORRT_LIB})

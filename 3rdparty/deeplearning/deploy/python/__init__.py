@@ -4,15 +4,15 @@ ONNX 导出与 engine 构建是 Python/C++ 推理共用的前置步骤，入口�
 deploy/export.py（本包之上）；本包负责 engine 加载与三层推理编排。
 
 Entry points (each has a CLI; run from the model repo 3rdparty/deeplearning):
-  python deploy/export.py       CONFIG CKPT --task det [--verify]   # 前置导出
-  python deploy/python/builder.py     --task det [--fp16]            # 仅构建 engine
-  python deploy/python/pipeline.py    CONFIG --task det [--checkpoint] [--verify]
+  python deploy/export.py                CONFIG CKPT --task det [--verify]  # 前置导出
+  python deploy/python/builder.py        --task det [--fp16]                # 仅构建 engine
+  python deploy/python/scripts/pipeline.py  CONFIG --task det [--checkpoint] [--verify]
+  python deploy/python/scripts/visualize.py CONFIG CKPT --engine_dir outputs/trt
 
 三层架构（预处理 / 推理 / 后处理）：
   preprocess   Preprocessor: 原始样本 -> 模型输入（深度投影 / 体素化）
   inference    Inferencer:   TRT engine 编排 + torch 自定义算子 -> 预测
   postprocess  Postprocessor: 预测 -> 检测框（解码 + NMS）
-  pipeline     TrtPipeline:  三层编排入口（+ verify / dump）
 
 其他模块：
   config       DeployConfig: shared paths / precision / behavior knobs
@@ -20,11 +20,12 @@ Entry points (each has a CLI; run from the model repo 3rdparty/deeplearning):
   builder      EngineBuilder: ONNX -> engine via the trtexec CLI only
   runtime      TrtEngine + load_engines: engine load / execute
   bev_pool_torch   camera_bev_from_depthnet (geometry + bev_pool)
+
+编排入口（TrtPipeline 与可视化）在 scripts/，见 python/README.md。
 """
 
 from deploy.python.bev_pool_torch import camera_bev_from_depthnet
 from deploy.python.inference import Inferencer, sparse_encoder_forward
-from deploy.python.pipeline import TrtPipeline
 from deploy.python.postprocess import Postprocessor
 from deploy.python.preprocess import Preprocessor, project_depth
 
@@ -32,7 +33,6 @@ __all__ = [
     "camera_bev_from_depthnet",
     "Inferencer",
     "sparse_encoder_forward",
-    "TrtPipeline",
     "Postprocessor",
     "Preprocessor",
     "project_depth",

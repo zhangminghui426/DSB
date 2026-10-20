@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # usage: deploy/launch/infer_trt.sh <det|seg> [extra args...]
-# Runs the TRT engines on a val sample (deploy/python/pipeline.py)。
+# Runs the TRT engines on a val sample (deploy/python/scripts/pipeline.py)。
 # TRT 推理直接用 --engine_dir 下的 engine，不需要 .pth；
 # 与 torch 参考对照时加 --verify --checkpoint <pth>。
 # Requires deploy/launch/export.sh to have produced outputs/onnx + outputs/trt.
@@ -18,4 +18,4 @@ case "$TASK" in
   *) echo "unknown task: $TASK" >&2; exit 2 ;;
 esac
 [ -f "$CFG" ] || { echo "config missing: $CFG" >&2; exit 2; }
-"$PY" "$DL/deploy/python/pipeline.py" "$CFG" --task "$TASK" "$@"
+"$PY" "$DL/deploy/python/scripts/pipeline.py" "$CFG" --task "$TASK" "$@"

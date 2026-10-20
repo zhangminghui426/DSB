@@ -1,12 +1,12 @@
 """Split-module ONNX export + trtexec engine build for BEVFusion det / seg.
 
 【部署前置步骤】Python 与 C++ 推理共用：导出分模块 ONNX -> trtexec 构建
-TRT engine。Python 侧直接以 engine 推理（deploy/python/pipeline.py），
+TRT engine。Python 侧直接以 engine 推理（deploy/python/scripts/pipeline.py），
 C++ 侧另用 deploy/tools/export_cpp_input.py 从 val 样本导出输入文件。
 
 Follows the CUDA-BEVFusion (NVIDIA-AI-IOT/Lidar_AI_Solution) module split so
 every exported graph is dense and TRT-parseable without custom plugins. The
-runtime split (deploy.python.pipeline + deploy.python.builder) keeps the
+runtime split (deploy.python/scripts/pipeline.py + deploy.python.builder) keeps the
 custom-CUDA-op parts on torch/CUDA: camera geometry + bev_pool +
 vtransform downsample (deploy.python.bev_pool_torch), lidar voxelization +
 sparse encoder (deploy.python.inference.sparse_encoder_forward), box decode

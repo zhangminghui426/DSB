@@ -2,9 +2,9 @@
 // 模型推理层：TRT engine 编排 + CPU 自定义算子，输入 -> 预测张量。
 // 与 Python 侧 deploy/inference.py（Inferencer）逐层对应。
 
-#include "config.hpp"
-#include "preprocess/preprocess.hpp"
-#include "inference/trt_engine.hpp"
+#include "dsb_infer/config.hpp"
+#include "dsb_infer/preprocess/preprocess.hpp"
+#include "dsb_infer/inference/trt_engine.hpp"
 
 #include <memory>
 #include <string>

@@ -13,10 +13,10 @@ lidar 体素化 + 稀疏编码、检测解码 + NMS）。
 
 Usage (run from the model repo root 3rdparty/deeplearning):
   # TRT 推理直接用已构建的 engine（不需要 .pth；--build 可由 export.py 产出）
-  python deploy/python/pipeline.py CONFIG --task det --engine_dir outputs/trt \
+  python deploy/python/scripts/pipeline.py CONFIG --task det --engine_dir outputs/trt \
       [--sample-index N] [--dump out.npz]
   # 与 torch 参考对照时才需要 checkpoint
-  python deploy/python/pipeline.py CONFIG --checkpoint ckpts/bevfusion-det-bf.pth \
+  python deploy/python/scripts/pipeline.py CONFIG --checkpoint ckpts/bevfusion-det-bf.pth \
       --task det --engine_dir outputs/trt --verify
 """
 
@@ -25,8 +25,8 @@ import os
 import os.path as osp
 import sys
 
-# deeplearning 根（上 3 级）：models/datasets/scripts 与 deploy.python 包都在其下
-_DL_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))
+# deeplearning 根（上 4 级）：models/datasets/scripts 与 deploy.python 包都在其下
+_DL_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))))
 sys.path.insert(0, _DL_ROOT)
 
 import numpy as np

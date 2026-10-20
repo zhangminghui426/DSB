@@ -1,8 +1,8 @@
 #pragma once
 // CPU 参考算子（推理层内部使用）：几何、bev_pool、降采样、稀疏编码。
 
-#include "config.hpp"
-#include "tensor.hpp"
+#include "dsb_infer/config.hpp"
+#include "dsb_infer/tensor.hpp"
 
 #include <vector>
 

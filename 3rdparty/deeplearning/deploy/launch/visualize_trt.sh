@@ -10,5 +10,5 @@ DL="$(cd "$HERE/../.." && pwd)"                  # 3rdparty/deeplearning（模�
 cd "$DL"
 source "$HERE/env.sh"
 CFG=configs/det_convfuser.py
-"$PY" "$DL/deploy/python/visualize.py" "$CFG" \
+"$PY" "$DL/deploy/python/scripts/visualize.py" "$CFG" \
     --engine_dir outputs/trt --out outputs/vis "$@"

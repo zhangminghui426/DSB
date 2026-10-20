@@ -1,6 +1,6 @@
 """Visualize TRT inference results: per-frame jpgs + temporal-sequence gif.
 
-Runs the TRT pipeline (deploy.python.pipeline) over consecutive val samples — or
+Runs the TRT pipeline (deploy.python/scripts/pipeline.py) over consecutive val samples — or
 reuses one existing npz dump (single frame) — and renders to <out>/ (default
 outputs/vis/, kept separate from the model/ckpt tree):
 
@@ -10,7 +10,7 @@ outputs/vis/, kept separate from the model/ckpt tree):
 Rendering reuses scripts/render.py (same drawing as scripts/visualize.py).
 
 Usage (run from the model repo root 3rdparty/deeplearning):
-  python deploy/python/visualize.py CONFIG CKPT --engine_dir outputs/trt \
+  python deploy/python/scripts/visualize.py CONFIG CKPT --engine_dir outputs/trt \
       --sample-index 5 --frames 1 [--stride 1] \
       [--npz outputs/trt/sample5.npz] \
       [--out outputs/vis] [--score_thr 0.3] [--max_boxes 40]
@@ -21,8 +21,8 @@ import os
 import os.path as osp
 import sys
 
-# deeplearning 根（上 3 级）：models/datasets/scripts 与 deploy.python 包都在其下
-_DL_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))
+# deeplearning 根（上 4 级）：models/datasets/scripts 与 deploy.python 包都在其下
+_DL_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))))
 sys.path.insert(0, _DL_ROOT)
 
 import numpy as np

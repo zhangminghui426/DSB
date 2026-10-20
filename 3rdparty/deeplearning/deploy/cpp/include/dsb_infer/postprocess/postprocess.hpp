@@ -2,8 +2,8 @@
 // 后处理层：head 预测 -> 检测框（NMS + bbox coder + 过滤）。
 // 与 Python 侧 deploy/postprocess.py（Postprocessor）逐层对应。
 
-#include "config.hpp"
-#include "tensor.hpp"
+#include "dsb_infer/config.hpp"
+#include "dsb_infer/tensor.hpp"
 
 #include <vector>
 

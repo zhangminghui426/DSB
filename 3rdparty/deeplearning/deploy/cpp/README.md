@@ -3,7 +3,7 @@
 部署总览（前置导出 / Python 推理 / 启动脚本）见
 [`../README.md`](../README.md)。
 
-C++ 端到端推理：加载 TRT engine，复用与 `deploy/python/pipeline.py` 相同的
+C++ 端到端推理：加载 TRT engine，复用与 `deploy/python/scripts/pipeline.py` 相同的
 图拆分（`deploy/python/graphs.py`），CPU 侧实现 camera 几何 / bev_pool /
 降采样、lidar 体素化 + 稀疏编码，det 解码在 CPU 完成。
 
@@ -28,16 +28,16 @@ points ──► voxelize + sparse_encoder (CPU) ──── lidar_bev (1,256,1
 ## 三层架构（与 deploy/python 对应）
 
 Python 与 C++ 按同一三层结构组织（预处理 / 推理 / 后处理），C++ 推理用到的
-自定义算子集中在 `ops/`，其参考定义（Python/CUDA 实现）见
-`3rdparty/deeplearning/ops/`（bev_pool_v2 / voxel / iou3d）。
+自定义算子集中在 `src/ops/`（头在 `include/dsb_infer/ops/`），其参考定义
+（Python/CUDA 实现）见 `3rdparty/deeplearning/ops/`（bev_pool_v2 / voxel / iou3d）。
 
 | 层 | C++ 目录 / 文件 | Python 模块 | 职责 |
 | --- | --- | --- | --- |
-| 预处理 | `preprocess/`（preprocess.hpp/cpp） | `deploy/python/preprocess.py` | 加载导出输入、lidar 深度投影、点云体素化 |
-| 推理 | `inference/`（inference.hpp/cpp + trt_engine） | `deploy/python/inference.py` + bev_pool_torch | TRT engine 编排（几何/bev_pool/降采样/稀疏编码走 `ops/`） |
-| 算子 | `ops/`（ops.hpp/cpp） | `3rdparty/deeplearning/ops/`（参考） | CPU 自定义算子：bev_pool / 体素化 / 稀疏卷积 |
-| 后处理 | `postprocess/`（postprocess.hpp/cpp） | `deploy/python/postprocess.py` | 检测解码（NMS + bbox coder + 过滤） |
-| 编排 | `pipeline.hpp/cpp` | `deploy/python/pipeline.py` | 三层组合 + verify / dump |
+| 预处理 | `src/preprocess/preprocess.cpp`（头 `include/dsb_infer/preprocess/preprocess.hpp`） | `deploy/python/preprocess.py` | 加载导出输入、lidar 深度投影、点云体素化 |
+| 推理 | `src/inference/`（inference.cpp + trt_engine.cpp） | `deploy/python/inference.py` + bev_pool_torch | TRT engine 编排（几何/bev_pool/降采样/稀疏编码走 `ops/`） |
+| 算子 | `src/ops/ops.cpp` | `3rdparty/deeplearning/ops/`（参考） | CPU 自定义算子：bev_pool / 体素化 / 稀疏卷积 |
+| 后处理 | `src/postprocess/postprocess.cpp` | `deploy/python/postprocess.py` | 检测解码（NMS + bbox coder + 过滤） |
+| 编排 | `src/pipeline.cpp` | `deploy/python/scripts/pipeline.py` | 三层组合 + verify / dump |
 
 ## 构建
 
@@ -88,17 +88,21 @@ python deploy/tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion
 
 ```
 deploy/cpp/
-  CMakeLists.txt
+  CMakeLists.txt               # dsb_infer 工程
   README.md
-  preprocess/preprocess.{hpp,cpp}     # 预处理层
-  inference/inference.{hpp,cpp}       # 推理层
-  inference/trt_engine.{hpp,cpp}      # TRT engine 加载/执行
-  ops/ops.{hpp,cpp}                   # 自定义 CPU 算子（对应 3rdparty/deeplearning/ops/ 参考）
-  postprocess/postprocess.{hpp,cpp}   # 后处理层
-  pipeline.{hpp,cpp}                  # 三层编排
-  config.{hpp,cpp}                    # 推理配置
-  tensor.hpp                          # 张量封装
-  main.cpp                            # CLI 入口
+  include/dsb_infer/           # 公共头文件
+    config.hpp                 #   推理配置
+    tensor.hpp                 #   张量封装
+    pipeline.hpp               #   三层编排
+    preprocess/preprocess.hpp  #   预处理层
+    inference/inference.hpp    #   推理层
+    inference/trt_engine.hpp   #   TRT engine 加载/执行
+    ops/ops.hpp                #   自定义 CPU 算子（对应 3rdparty/deeplearning/ops/ 参考）
+    postprocess/postprocess.hpp#   后处理层
+  src/                         # 实现
+    main.cpp                   #   CLI 入口
+    pipeline.cpp  config.cpp
+    preprocess/  inference/  ops/  postprocess/
 ```
 
 ## 已知限制

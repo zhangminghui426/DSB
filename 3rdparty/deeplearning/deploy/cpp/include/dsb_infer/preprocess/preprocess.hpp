@@ -2,8 +2,8 @@
 // 数据预处理层：加载导出输入并转换为模型输入（深度投影 / 体素化）。
 // 与 Python 侧 deploy/preprocess.py（Preprocessor）逐层对应。
 
-#include "config.hpp"
-#include "tensor.hpp"
+#include "dsb_infer/config.hpp"
+#include "dsb_infer/tensor.hpp"
 
 #include <string>
 #include <vector>

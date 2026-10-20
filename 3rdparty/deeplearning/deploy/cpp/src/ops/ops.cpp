@@ -1,7 +1,7 @@
 // CPU 参考算子实现：矩阵工具、几何、bev_pool、降采样、稀疏编码。
 // 供推理层（inference.cpp）内部调用；与 torch/spconv 参考逐位对齐。
 
-#include "ops/ops.hpp"
+#include "dsb_infer/ops/ops.hpp"
 
 #include <algorithm>
 #include <cmath>

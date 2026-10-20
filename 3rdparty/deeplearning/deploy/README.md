@@ -7,7 +7,7 @@ engine（前置，Python/C++ 共用）→ 推理**。自定义 CUDA 算子（bev
 ```
 deploy/
 ├── export.py        # 前置导出：ONNX 分模块导出 + trtexec 构建 engine（Python/C++ 共用）
-├── python/          # Python 推理包（deploy.python：preprocess/inference/postprocess 三层）
+├── python/          # Python 推理（scripts/ 入口 + deploy.python 库三层，见 python/README.md）
 ├── cpp/             # C++ 推理（dsb_infer，同三层 + ops，见 cpp/README.md）
 ├── tools/           # export_cpp_input.py（C++ 输入导出）
 └── launch/          # 部署启动脚本（export/infer_trt/visualize_trt）
@@ -37,17 +37,17 @@ python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
 
 产物：`outputs/onnx/*.onnx`、`outputs/trt/*.engine`。
 
-## 2. Python TRT 推理（deploy/python/pipeline.py）
+## 2. Python TRT 推理（deploy/python/scripts/pipeline.py）
 
 三层编排（Preprocessor → Inferencer → Postprocessor），直接用 engine，
 不需要 `.pth`：
 
 ```bash
-python deploy/python/pipeline.py configs/det_convfuser.py --task det \
+python deploy/python/scripts/pipeline.py configs/det_convfuser.py --task det \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 
 # 与 torch 参考对照（需 checkpoint）
-python deploy/python/pipeline.py configs/det_convfuser.py --checkpoint ckpts/bevfusion-det-bf.pth \
+python deploy/python/scripts/pipeline.py configs/det_convfuser.py --checkpoint ckpts/bevfusion-det-bf.pth \
     --task det --engine_dir outputs/trt --verify
 ```
 
@@ -56,7 +56,7 @@ python deploy/python/pipeline.py configs/det_convfuser.py --checkpoint ckpts/bev
 ```bash
 bash deploy/launch/visualize_trt.sh --sample-index 5                  # 单帧：BEV + 6 相机
 bash deploy/launch/visualize_trt.sh --sample-index 5 --frames 10 --fps 4  # 序列 gif
-python deploy/python/visualize.py configs/det_convfuser.py \
+python deploy/python/scripts/visualize.py configs/det_convfuser.py \
     --npz outputs/trt/sample5.npz --out outputs/vis                   # 复用已 dump 结果
 ```
 

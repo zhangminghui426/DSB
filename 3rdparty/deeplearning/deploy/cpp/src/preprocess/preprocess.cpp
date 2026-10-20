@@ -1,7 +1,7 @@
 // 数据预处理层实现：加载导出输入 + 深度投影 + 体素化。
 // 镜像 Python 侧 deploy/preprocess.py（project_depth / voxelize）。
 
-#include "preprocess/preprocess.hpp"
+#include "dsb_infer/preprocess/preprocess.hpp"
 
 #include <algorithm>
 #include <cstdio>
