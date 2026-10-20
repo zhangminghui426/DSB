@@ -39,7 +39,7 @@ Python 与 C++ 按同一三层结构组织（预处理 / 推理 / 后处理）�
 | 后处理 | `src/postprocess/postprocess.cpp` | `deploy/python/postprocess.py` | 检测解码（NMS + bbox coder + 过滤） |
 | 编排 | `src/pipeline.cpp` | `deploy/python/scripts/pipeline.py` | 三层组合 + verify / dump |
 
-## 构建
+## 构建（仓库根 DSB/ 下）
 
 ```bash
 cd 3rdparty/deeplearning/deploy/cpp
@@ -48,17 +48,19 @@ cmake .. -DTENSORRT_ROOT=/opt/TensorRT-10.9.0.34
 make -j
 ```
 
-## 运行
+## 运行（仓库根 DSB/ 下）
 
-输入文件用 `deploy/tools/export_cpp_input.py` 从一张 val 样本导出（从仓库根运行）：
+输入文件用 `deploy/tools/export_cpp_input.py` 从一张 val 样本导出（需训练环境）：
 
 ```bash
+cd 3rdparty/deeplearning
 python deploy/tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --sample-index 5 --out-dir outputs/cpp_input
 ```
 
 ```bash
-./3rdparty/deeplearning/deploy/cpp/build/dsb_infer \
+cd 3rdparty/deeplearning
+./deploy/cpp/build/dsb_infer \
     --engine-dir outputs/trt \
     --input-dir outputs/cpp_input \
     --dump-dir outputs/cpp_out
