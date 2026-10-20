@@ -52,10 +52,10 @@ python tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion-det-bf
 ./build/dsb_infer \
     --engine-dir outputs/trt \
     --input-dir outputs/cpp_input \
-    --dump outputs/cpp_out
+    --dump-dir outputs/cpp_out
 ```
 
-`--dump` 写出 cam/lidar BEV、decoder_feat 与 boxes/scores/labels 的二进制
+`--dump-dir` 写出 cam/lidar BEV、decoder_feat 与 boxes/scores/labels 的二进制
 （`cam_bev.bin`/`lidar_bev.bin`/`decoder_feat.bin`/`boxes.bin`/`scores.bin`/`labels.bin`）；
 存在 `<input-dir>/ref/decoder_feat.bin` 时自动对比 decoder_feat（torch 参考）。
 
