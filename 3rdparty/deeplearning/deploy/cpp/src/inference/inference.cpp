@@ -362,10 +362,9 @@ Tensor Inferencer::lidar_branch(const Preprocessor::Inputs &in) const {
   cuda_sparse_encode(
       sparse_layers_dev_, (int)cfg_.sparse_layers.size(), blob_sparse_,
       sparse_offsets_dev_, sparse_cur_, nvox, feats_dim, sparse_coords_,
-      lidar_bev_buf_, X, Y, Z, sparse_cur_, sparse_nxt_, sparse_raw_,
-      sparse_hash_keys_, sparse_hash_idx_, sparse_out_hash_keys_,
-      sparse_out_hash_idx_, hash_size_, sparse_coords_, sparse_counter_,
-      stream_);
+      lidar_bev_buf_, X, Y, Z, sparse_nxt_, sparse_raw_, sparse_hash_keys_,
+      sparse_hash_idx_, sparse_out_hash_keys_, sparse_out_hash_idx_,
+      hash_size_, sparse_coords_, sparse_counter_, stream_);
   cudaStreamSynchronize(stream_);
   Tensor lidar_bev({(int64_t)C_final * Z, X, Y});
   cudaMemcpy(lidar_bev.data.data(), lidar_bev_buf_,

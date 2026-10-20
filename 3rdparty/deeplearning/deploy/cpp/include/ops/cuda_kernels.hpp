@@ -65,7 +65,7 @@ void cuda_downsample(const CudaDownsampleLayer *layers, int n_layers,
 // 输入：cur (nvox*in_c) 为体素均值特征（mean reduce 已在调用方做）；
 //       coords_in (nvox*3) int 网格坐标；blob / offsets_all 设备端权重。
 // 输出：lidar_bev (C_final*Z, X, Y)。
-// 工作缓冲：cur_buf/nxt_buf/raw_buf (max_voxels*max_c)；
+// 工作缓冲：nxt_buf/raw_buf (max_voxels*max_c)；
 //          hash_keys/hash_idx 输入 hash，out_hash_keys/out_hash_idx 输出 hash
 //          （strided 输出坐标可与输入重合，必须用独立表），均为 hash_size 大小；
 //          coords_buf (max_voxels*3) int；counter 1 个 int。
@@ -73,8 +73,8 @@ void cuda_sparse_encode(
     const CudaSparseLayer *layers, int n_layers, const float *blob,
     const int *offsets_all, const float *cur, int nvox, int in_c0,
     const int *coords_in, float *lidar_bev, int X, int Y, int Z,
-    float *cur_buf, float *nxt_buf, float *raw_buf, long long *hash_keys,
-    int *hash_idx, long long *out_hash_keys, int *out_hash_idx,
-    int hash_size, int *coords_buf, int *counter, cudaStream_t stream);
+    float *nxt_buf, float *raw_buf, long long *hash_keys, int *hash_idx,
+    long long *out_hash_keys, int *out_hash_idx, int hash_size,
+    int *coords_buf, int *counter, cudaStream_t stream);
 
 }  // namespace dsb

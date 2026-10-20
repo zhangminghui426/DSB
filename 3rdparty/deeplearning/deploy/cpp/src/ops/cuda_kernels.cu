@@ -388,9 +388,9 @@ void cuda_sparse_encode(
     const CudaSparseLayer *layers, int n_layers, const float *blob,
     const int *offsets_all, const float *cur, int nvox, int in_c0,
     const int *coords_in, float *lidar_bev, int X, int Y, int Z,
-    float *cur_buf, float *nxt_buf, float *raw_buf, long long *hash_keys,
-    int *hash_idx, long long *out_hash_keys, int *out_hash_idx,
-    int hash_size, int *coords_buf, int *counter, cudaStream_t stream) {
+    float *nxt_buf, float *raw_buf, long long *hash_keys, int *hash_idx,
+    long long *out_hash_keys, int *out_hash_idx, int hash_size,
+    int *coords_buf, int *counter, cudaStream_t stream) {
   const int threads = 256;
   float *curf = const_cast<float *>(cur);
   float *nxtf = nxt_buf;
