@@ -4,17 +4,17 @@
 [`../README.md`](../README.md)。
 
 C++ 端到端推理：加载 TRT engine，复用与 `deploy/python/scripts/pipeline.py` 相同的
-图拆分（`deploy/python/graphs.py`），CPU 侧实现 camera 几何 / bev_pool /
-降采样、lidar 体素化 + 稀疏编码，det 解码在 CPU 完成。
+图拆分（`deploy/python/graphs.py`）。camera 链的自定义算子（几何 / softmax fold +
+bev_pool / 降采样）与 lidar 体素化、稀疏编码在 CPU 侧实现，det 解码在 CPU 完成。
 
 ```
 img ──► [TRT camera.backbone] ── feats ──► project_depth ──► [TRT camera.vtransform] ── depthnet
         │                                                                                │
         │                                 softmax(depth) × feats                         │
         │                                        │                                      │
-        │                        compute_geometry + bev_pool (CPU)                      │
+        │                        compute_geometry + bev_pool (CUDA kernel)              │
         │                                        │                                      │
-        │                                  downsample_conv (CPU)                         │
+        │                                  downsample_conv (CUDA kernel)                 │
         │                                        │                                      │
         │                                    cam_bev (1,80,180,180)                      │
         │                                        │                                      │
@@ -35,9 +35,26 @@ Python 与 C++ 按同一三层结构组织（预处理 / 推理 / 后处理）�
 | --- | --- | --- | --- |
 | 预处理 | `src/preprocess/preprocess.cpp`（头 `include/preprocess/preprocess.hpp`） | `deploy/python/preprocess.py` | 加载导出输入、lidar 深度投影、点云体素化 |
 | 推理 | `src/inference/`（inference.cpp + trt_engine.cpp） | `deploy/python/inference.py` + bev_pool_torch | TRT engine 编排（几何/bev_pool/降采样/稀疏编码走 `ops/`） |
-| 算子 | `src/ops/ops.cpp` | `3rdparty/deeplearning/ops/`（参考） | CPU 自定义算子：bev_pool / 体素化 / 稀疏卷积 |
+| 算子 | `src/ops/ops.cpp` + `src/ops/cuda_kernels.cu` | `3rdparty/deeplearning/ops/`（参考） | CPU + CUDA 自定义算子：bev_pool / 体素化 / 稀疏卷积 |
 | 后处理 | `src/postprocess/postprocess.cpp` | `deploy/python/postprocess.py` | 检测解码（NMS + bbox coder + 过滤） |
 | 编排 | `src/pipeline.cpp` | `deploy/python/scripts/pipeline.py` | 三层组合 + verify / dump |
+
+## CUDA 自定义算子（src/ops/cuda_kernels.cu）
+
+参考 NVIDIA-AI-IOT/Lidar_AI_Solution 的 CUDA-BEVFusion kernel 组织方式，
+把 camera 链的 CPU 串行循环（此前 downsample_conv ≈ 120s、sparse_encoder ≈ 14.5s）
+替换为独立 `.cu` kernel，与 TRT engine 共用同一个 CUDA stream 串行执行：
+
+| kernel | 替代的 CPU 步骤 | 说明 |
+| --- | --- | --- |
+| `geometry_kernel` | `compute_geometry` | 每线程一个 frustum 点 × 6 相机，反投影到 lidar 系 |
+| `fold_bevpool_kernel` | `fold_depth_features` + `bev_pool` | 深度 softmax 折入特征 + 网格量化 + `atomicAdd` 求和（合并两步、免中间张量） |
+| `downsample_kernel` | `downsample_conv` | 逐层 3×3 conv + BN + ReLU |
+
+- 数值语义与 `src/ops/ops.cpp` 的 CPU 参考逐位对齐（rank 求和、无归一化）。
+- `TrtEngine::run(..., stream)` 以 `cudaMemcpyAsync` + `enqueueV3` 在外部 stream 上
+  异步执行，与 kernel 同流串行；`camera_bev` 链结束后统一 `cudaStreamSynchronize`。
+- 构建需要 CUDA toolkit（`check_language(CUDA)`，缺 CUDA 直接报错）。
 
 ## 构建（仓库根 DSB/ 下）
 
@@ -90,16 +107,17 @@ cd 3rdparty/deeplearning
 
 ```
 deploy/cpp/
-  CMakeLists.txt               # dsb_infer 工程
+  CMakeLists.txt               # dsb_infer 工程（CUDA + TensorRT 硬依赖）
   README.md
   include/           # 公共头文件
     config.hpp                 #   推理配置
-    tensor.hpp                 #   张量封装
+    tensor.hpp                 #   张量封装（Mat3/Mat4）
     pipeline.hpp               #   三层编排
     preprocess/preprocess.hpp  #   预处理层
     inference/inference.hpp    #   推理层
     inference/trt_engine.hpp   #   TRT engine 加载/执行
     ops/ops.hpp                #   自定义 CPU 算子（对应 3rdparty/deeplearning/ops/ 参考）
+    ops/cuda_kernels.hpp       #   CUDA 算子参数与入口（geometry/fold_bevpool/downsample）
     postprocess/postprocess.hpp#   后处理层
   src/                         # 实现
     main.cpp                   #   CLI 入口
@@ -116,5 +134,6 @@ deploy/cpp/
 3. **9 个 head 输出**：`head.bbox` 输出 8 个 pred tensor + `query_labels`
    （float 承载 proposal 类别 id，来自图内 topk，解码时转 int）。tensor 名以
    `deploy/python/graphs.py` 为准。
-4. **相机/LiDAR 分支的 CPU 算子未做 SIMD 优化**，仅供功能验证。
+4. **lidar 分支（体素化 + 稀疏编码）仍是 CPU**：`voxelize`/`sparse_encoder`
+   尚未 CUDA 化（下一步，参考 CUDA-BEVFusion 的 lidar-voxelization.cu）。
 5. **CMake 需要 TensorRT 与 CUDA**：`-DTENSORRT_ROOT` 指向 TRT 安装目录。

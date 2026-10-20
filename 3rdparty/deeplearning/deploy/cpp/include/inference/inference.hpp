@@ -1,10 +1,15 @@
 #pragma once
-// 模型推理层：TRT engine 编排 + CPU 自定义算子，输入 -> 预测张量。
+// 模型推理层：TRT engine 编排 + CUDA/CPU 自定义算子，输入 -> 预测张量。
 // 与 Python 侧 deploy/inference.py（Inferencer）逐层对应。
+// 自定义算子（geometry / fold+bev_pool / downsample / voxelize / sparse）
+// 参考 NVIDIA CUDA-BEVFusion 以 CUDA kernel 实现，与 TRT 共用 stream。
 
 #include "config.hpp"
 #include "preprocess/preprocess.hpp"
 #include "inference/trt_engine.hpp"
+#include "ops/cuda_kernels.hpp"
+
+#include <cuda_runtime_api.h>
 
 #include <memory>
 #include <string>
@@ -15,6 +20,7 @@ namespace dsb {
 class Inferencer {
  public:
   explicit Inferencer(const Config &cfg);
+  ~Inferencer();
 
   void load_engines(const std::string &engine_dir);
   void load_weights(const std::string &input_dir);
@@ -42,6 +48,15 @@ class Inferencer {
   const Config &cfg_;
   std::unique_ptr<TrtEngine> backbone_, vtransform_, fuser_, head_;
   std::vector<float> downsample_blob_, sparse_blob_;
+
+  // ---- CUDA 自定义算子资源（与 TRT 引擎共用 stream） --------------------
+  cudaStream_t stream_ = nullptr;
+  float *geom_buf_ = nullptr;       // N*D*fH*fW*3
+  float *depthnet_buf_ = nullptr;   // N*(D+C)*fH*fW
+  float *bev_buf_ = nullptr;        // C*nx0*nx1（bev_pool 输出）
+  float *ds_a_ = nullptr, *ds_b_ = nullptr, *ds_out_ = nullptr;
+  float *blob_ds_ = nullptr;        // downsample 权重（设备端）
+  CudaDownsampleLayer *layers_dev_ = nullptr;
 };
 
 }  // namespace dsb

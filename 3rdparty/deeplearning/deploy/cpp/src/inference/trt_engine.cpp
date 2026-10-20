@@ -50,7 +50,7 @@ TrtEngine::TrtEngine(const std::string &engine_path) : impl_(new Impl) {
 TrtEngine::~TrtEngine() { delete impl_; }
 
 std::map<std::string, Tensor> TrtEngine::run(
-    const std::map<std::string, Tensor> &inputs) {
+    const std::map<std::string, Tensor> &inputs, cudaStream_t stream) {
   std::map<std::string, Tensor> outputs;
   std::vector<std::unique_ptr<void, decltype(&cudaFree)>> dev;
   auto alloc = [&](size_t bytes) {
@@ -63,6 +63,7 @@ std::map<std::string, Tensor> TrtEngine::run(
   nvinfer1::IExecutionContext *ctx = impl_->ctx.get();
   // TRT 10.x V3 API: bind addresses via setTensorAddress, then enqueueV3(stream).
   // (enqueueV3(stream, IOBindingEntry) overload only exists from TRT 10.11+.)
+  cudaStream_t s = stream ? stream : impl_->stream->s;
   std::map<std::string, void *> out_dev;
   for (int i = 0; i < impl_->engine->getNbIOTensors(); ++i) {
     const char *name = impl_->engine->getIOTensorName(i);
@@ -70,8 +71,8 @@ std::map<std::string, Tensor> TrtEngine::run(
     if (mode == nvinfer1::TensorIOMode::kINPUT) {
       const Tensor &t = inputs.at(name);
       void *d = alloc(t.data.size() * sizeof(float));
-      cudaMemcpy(d, t.data.data(), t.data.size() * sizeof(float),
-                 cudaMemcpyHostToDevice);
+      cudaMemcpyAsync(d, t.data.data(), t.data.size() * sizeof(float),
+                      cudaMemcpyHostToDevice, s);
       ctx->setTensorAddress(name, d);
     } else {
       nvinfer1::Dims dims = impl_->engine->getTensorShape(name);
@@ -84,17 +85,16 @@ std::map<std::string, Tensor> TrtEngine::run(
       out_dev[name] = d;
     }
   }
-  if (!ctx->enqueueV3(impl_->stream->s)) {
-    cudaStreamSynchronize(impl_->stream->s);
+  if (!ctx->enqueueV3(s)) {
+    cudaStreamSynchronize(s);
     throw std::runtime_error("engine execute failed");
   }
-  cudaStreamSynchronize(impl_->stream->s);
 
-  // copy outputs back
+  // copy outputs back（同一 stream 串行，synchronize 由调用方统一做）
   for (const auto &kv : out_dev) {
-    cudaMemcpy(outputs[kv.first].data.data(), kv.second,
-               outputs[kv.first].data.size() * sizeof(float),
-               cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(outputs[kv.first].data.data(), kv.second,
+                    outputs[kv.first].data.size() * sizeof(float),
+                    cudaMemcpyDeviceToHost, s);
   }
   return outputs;
 }

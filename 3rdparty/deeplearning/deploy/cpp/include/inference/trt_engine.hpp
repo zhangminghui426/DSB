@@ -3,6 +3,8 @@
 
 #include "tensor.hpp"
 
+#include <cuda_runtime_api.h>
+
 #include <map>
 #include <string>
 
@@ -14,8 +16,10 @@ class TrtEngine {
   ~TrtEngine();
   // inputs: name -> flat float tensor (static shapes). Returns outputs map
   // (shapes read from the engine bindings).
+  // stream: 外部 CUDA stream（与 CUDA 自定义算子同流串行）；nullptr 用内部 stream。
   std::map<std::string, Tensor> run(
-      const std::map<std::string, Tensor> &inputs);
+      const std::map<std::string, Tensor> &inputs,
+      cudaStream_t stream = nullptr);
 
  private:
   struct Impl;

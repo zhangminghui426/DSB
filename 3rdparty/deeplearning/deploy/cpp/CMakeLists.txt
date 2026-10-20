@@ -4,6 +4,17 @@ project(dsb_infer LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ---- CUDA (自定义算子 kernel：geometry / fold+bev_pool / downsample) ------
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+  enable_language(CUDA)
+  set(CMAKE_CUDA_STANDARD 17)
+  set(DSB_HAVE_CUDA TRUE)
+else()
+  set(DSB_HAVE_CUDA FALSE)
+endif()
+
 # ---- TensorRT ---------------------------------------------------------
 # Point TENSORRT_ROOT at the TRT install, e.g.
 #   -DTENSORRT_ROOT=/opt/TensorRT-10.9.0.34
@@ -26,10 +37,14 @@ endif()
 
 # ---- CUDA (used only for device buffers / stream in trt_engine) --------
 find_package(CUDAToolkit QUIET)
-if(CUDAToolkit_FOUND)
+if(CUDAToolkit_FOUND AND DSB_HAVE_CUDA)
   set(DSB_HAVE_CUDA TRUE)
 else()
   set(DSB_HAVE_CUDA FALSE)
+endif()
+if(NOT DSB_HAVE_CUDA)
+  # 自定义算子 kernel 与 TRT 执行（enqueueV3 + device buffers）都依赖 CUDA。
+  message(FATAL_ERROR "CUDA toolkit not found: custom ops / TRT execution require it. Install CUDA or set CMAKE_CUDA_COMPILER.")
 endif()
 
 # ---- OpenCV (optional: decode raw jpg input; not required) -------------
@@ -53,6 +68,9 @@ add_executable(dsb_infer
   src/ops/ops.cpp
   src/postprocess/postprocess.cpp
 )
+if(DSB_HAVE_CUDA)
+  target_sources(dsb_infer PRIVATE src/ops/cuda_kernels.cu)
+endif()
 target_include_directories(dsb_infer PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${TENSORRT_INCLUDE_DIR}
