@@ -1,21 +1,18 @@
 """Export det inference inputs / weights / reference for the C++ runtime.
 
-Produces deploy/cpp consumes:
-  <out>/meta.json            geometry + structure + decode parameters
-  <out>/inputs/img.bin       (6,3,256,704) fp32 normalized image (eval protocol)
-  <out>/inputs/points.bin    int32 n + (n,5) fp32 lidar points (eval protocol)
-  <out>/inputs/matrices.bin  19x(4x4) float32 row-major: 6 camera2lidar +
-                             6 camera_intrinsics + 6 img_aug + 1 lidar_aug
-  <out>/weights/sparse_encoder.bin  conv/bn params, concatenated (meta gives layout)
-  <out>/weights/downsample.bin      vtransform downsample conv/bn params
-  <out>/ref/decoder_feat.bin        (1,512,180,180) fp32 torch reference
-  <out>/ref/boxes.json              decoded boxes/scores/labels reference
+Produces (consumed by deploy/cpp):
+  <out>/meta.json + meta.txt     geometry / structure / decode parameters（C++ 层表）
+  <out>/inputs/img.bin           (6,3,256,704) fp32 normalized image
+  <out>/inputs/points.bin        int32 n + (n,5) fp32 lidar points
+  <out>/inputs/matrices.bin      19x(4x4) float32 row-major
+                                (6 camera2lidar + 6 intrins + 6 img_aug + 1 lidar_aug)
+  <out>/weights/sparse_encoder.bin  稀疏编码器 conv/bn 参数（meta 给布局）
+  <out>/weights/downsample.bin       vtransform downsample conv/bn 参数
+  <out>/ref/decoder_feat.bin + boxes.json   torch 参考输出
 
 Run on the GPU box (same env as training):
   python deploy/tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
       --out-dir deploy_inputs --sample-index 0
-
-Then build & run deploy/cpp with --input-dir <out>.
 """
 
 import argparse
@@ -24,9 +21,7 @@ import os
 import os.path as osp
 import sys
 
-# 本脚本位于 3rdparty/deeplearning/deploy/tools/：上两级即模型库根，
-# datasets/models/scripts/configs 均在其下；允许从仓库根以裸相对路径
-# （如 configs/det_convfuser.py）运行。
+# 上两级即模型库根，允许以裸相对路径（configs/...、ckpts/...）运行
 _DL_ROOT = osp.join(osp.dirname(osp.abspath(__file__)), "..", "..")
 sys.path.insert(0, _DL_ROOT)
 
@@ -40,19 +35,14 @@ from scripts.trainer import load_model_checkpoint, to_device
 
 
 def dump_bin(path, arr):
-    arr = np.ascontiguousarray(arr, dtype=np.float32)
-    arr.tofile(path)
+    np.ascontiguousarray(arr, dtype=np.float32).tofile(path)
 
 
 def bn_params(m):
-    """(gamma, beta, running_mean, running_var, eps) as np arrays."""
-    return {
-        "w": m.weight.detach().cpu().numpy(),
-        "b": m.bias.detach().cpu().numpy(),
-        "mean": m.running_mean.detach().cpu().numpy(),
-        "var": m.running_var.detach().cpu().numpy(),
-        "eps": float(m.eps),
-    }
+    """BN 的 (gamma, beta, running_mean, running_var) 与 eps。"""
+    return {k: v.detach().cpu().numpy() for k, v in (
+        ("w", m.weight), ("b", m.bias),
+        ("mean", m.running_mean), ("var", m.running_var))} | {"eps": float(m.eps)}
 
 
 def conv_params(m):
@@ -62,23 +52,19 @@ def conv_params(m):
 
 
 def collect_sparse_layers(encoder):
-    """Enumerate SparseEncoder conv layers in execution order.
+    """按执行序枚举 SparseEncoder conv 层，返回层表 + 一维拼接权重 blob。
 
-    Returns list of layer dicts + concatenated float32 weight blob.
-    Layer dict: type=subm|strided, in/out channels, kernel (kx,ky,kz),
-    stride, padding, offsets (z,y,x-outer kernel enumeration, K entries),
-    w_off/w_len/b_off in the blob.
+    每层 blob 布局（C++ 按 w_off/w_len 偏移读取）：
+      conv.w(Cout*K*D*H*Cin) + b(Cout) + bn.g(Cout) + bn.b(Cout) + bn.mean(Cout) + bn.var(Cout)
     """
     layers, blobs = [], []
 
     def add(conv, bn, ktype, kernel, stride, pad):
         w, b = conv_params(conv)
-        # spconv 2.x conv.weight: (Cout, K, D, H, Cin) -> flatten to (Cout, K, Cin)
         Cout, K, D, H, Cin = w.shape
         assert (K, D, H) == tuple(kernel), (w.shape, kernel)
-        wf = w.reshape(Cout, K * D * H, Cin)
-        # kernel enumeration: z, y, x outer (spconv convention)
-        offsets = []
+        wf = w.reshape(Cout, K * D * H, Cin).reshape(-1)
+        offsets = []  # kernel 枚举序：z, y, x 外层（spconv 约定）
         for dz in range(kernel[2]):
             for dy in range(kernel[1]):
                 for dx in range(kernel[0]):
@@ -97,43 +83,40 @@ def collect_sparse_layers(encoder):
         layers.append(dict(
             type=ktype, in_c=Cin, out_c=Cout, kernel=kernel,
             stride=stride, pad=pad, offsets=offsets,
-            w_off=off,
-            w_len=int(wf.size), b_len=Cout,
-            bn_eps=eps,
+            w_off=off, w_len=int(wf.size), b_len=Cout, bn_eps=eps,
         ))
 
     def add_subm_block(conv1, bn1, conv2, bn2):
         add(conv1, bn1, "subm", (3, 3, 3), (1, 1, 1), (1, 1, 1))
         add(conv2, bn2, "subm", (3, 3, 3), (1, 1, 1), (1, 1, 1))
 
-    # conv_input
     add(encoder.conv_input[0], encoder.conv_input[1], "subm", (3, 3, 3), (1, 1, 1), (1, 1, 1))
-    for i, layer in enumerate(encoder.encoder_layers):
-        for j, m in enumerate(layer):
+    for layer in encoder.encoder_layers:
+        for m in layer:
             if m.__class__.__name__ == "SparseBasicBlock":
                 add_subm_block(m.conv1, m.bn1, m.conv2, m.bn2)
             else:  # SparseSequential(conv, bn, relu)
                 add(m[0], m[1], "strided", (3, 3, 3), (2, 2, 2), (1, 1, 1))
-    # conv_out: SparseConv3d kernel (1,1,3) stride (1,1,2) pad 0 (x,y,z order)
+    # conv_out: SparseConv3d kernel (1,1,3) stride (1,1,2) pad 0（x,y,z 序）
     add(encoder.conv_out[0], encoder.conv_out[1], "strided", (1, 1, 3), (1, 1, 2), (0, 0, 0))
     return layers, np.concatenate(blobs)
 
 
 def collect_downsample(vt):
-    """DepthLSSTransform.downsample: 3x (conv, bn, relu); mid conv stride 2."""
-    layers, blobs = [], []
-    names = []
+    """DepthLSSTransform.downsample: 3x (conv, bn, relu)，中间 conv stride 2。"""
+    layers, blobs, pending = [], [], []
     for m in vt.downsample:
         if isinstance(m, torch.nn.Conv2d):
-            names.append(m)
+            pending.append(m)
         elif isinstance(m, torch.nn.BatchNorm2d):
-            conv = names[-1]
+            conv = pending[-1]
             w = conv.weight.detach().cpu().numpy()
             b = conv.bias.detach().cpu().numpy() if conv.bias is not None else None
             g, bta, mean, var = (bn_params(m)["w"], bn_params(m)["b"],
                                  bn_params(m)["mean"], bn_params(m)["var"])
             off = sum(x.size for x in blobs)
-            blobs.extend([w, b if b is not None else np.zeros(w.shape[0], np.float32),
+            blobs.extend([w.reshape(-1),
+                          b if b is not None else np.zeros(w.shape[0], np.float32),
                           g, bta, mean, var])
             layers.append(dict(
                 in_c=w.shape[1], out_c=w.shape[0], k=conv.kernel_size[0],
@@ -155,25 +138,18 @@ def main():
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cuda.matmul.allow_tf32 = False
 
-    # resolve bare repo-root relative paths against 3rdparty/deeplearning
     def resolve(p):
         return p if osp.exists(p) else osp.join(_DL_ROOT, p)
 
     cfg = load_config(resolve(args.config))
-
-    # rebase bare relative data paths onto 3rdparty/deeplearning
-    def rebase(p):
-        return p if (not p or osp.isabs(p) or osp.exists(p)) else \
-            osp.join(_DL_ROOT, p)
-
-    for phase in ("train", "val", "test"):
+    for phase in ("train", "val", "test"):  # 裸相对数据路径重定向到模型库根
         d = cfg.data.get(phase)
         if not d:
             continue
-        if d.get("dataset_root"):
-            d["dataset_root"] = rebase(d["dataset_root"])
-        if d.get("ann_file"):
-            d["ann_file"] = rebase(d["ann_file"])
+        for key in ("dataset_root", "ann_file"):
+            v = d.get(key)
+            if v and not osp.isabs(v) and not osp.exists(v):
+                d[key] = osp.join(_DL_ROOT, v)
 
     model = build_model(cfg.model).cuda().eval()
     load_model_checkpoint(model, resolve(args.checkpoint), strict=True)
@@ -186,24 +162,25 @@ def main():
     for sub in ("inputs", "weights", "ref"):
         os.makedirs(osp.join(out, sub), exist_ok=True)
 
-    # ---- inputs -------------------------------------------------------
+    # ---- 输入 ----
     img = batch["img"][0].detach().cpu().numpy()  # (6,3,256,704)
     dump_bin(osp.join(out, "inputs/img.bin"), img)
     pts = batch["points"][0].detach().cpu().numpy().astype(np.float32)  # (N,5)
     with open(osp.join(out, "inputs/points.bin"), "wb") as f:
         f.write(np.int32(len(pts)).tobytes())
         f.write(pts.tobytes())
-    cam2lidar = batch["camera2lidar"][0].detach().cpu().numpy()   # (N,4,4)
-    intrins = batch["camera_intrinsics"][0].detach().cpu().numpy()  # (N,4,4)
-    img_aug = batch["img_aug_matrix"][0].detach().cpu().numpy()   # (N,4,4)
     lidar_aug = batch["lidar_aug_matrix"][0].detach().cpu().numpy()  # (4,4)
     if lidar_aug.ndim == 2:
         lidar_aug = lidar_aug[None]  # -> (1,4,4)
-    mats = np.concatenate([cam2lidar, intrins, img_aug, lidar_aug],
-                          axis=0).astype(np.float32)  # (19,4,4)
+    mats = np.concatenate([
+        batch["camera2lidar"][0].detach().cpu().numpy(),
+        batch["camera_intrinsics"][0].detach().cpu().numpy(),
+        batch["img_aug_matrix"][0].detach().cpu().numpy(),
+        lidar_aug,
+    ], axis=0).astype(np.float32)  # (19,4,4)
     dump_bin(osp.join(out, "inputs/matrices.bin"), mats)
 
-    # ---- weights -----------------------------------------------------
+    # ---- 权重 ----
     enc = model.encoders["lidar"]["backbone"]
     sparse_layers, sparse_blob = collect_sparse_layers(enc)
     dump_bin(osp.join(out, "weights/sparse_encoder.bin"), sparse_blob)
@@ -211,7 +188,7 @@ def main():
     ds_layers, ds_blob = collect_downsample(vt)
     dump_bin(osp.join(out, "weights/downsample.bin"), ds_blob)
 
-    # ---- reference outputs -------------------------------------------
+    # ---- 参考输出 ----
     with torch.no_grad():
         bev = model.bev_branch(
             batch["img"], batch["points"], None, batch["camera2ego"],
@@ -229,8 +206,6 @@ def main():
         json.dump({"boxes": boxes.tolist(), "scores": scores.tolist(),
                    "labels": labels.tolist()}, f)
 
-    head = model.heads["object"]
-    bbox_coder = head.bbox_coder
     meta = dict(
         B=1, N=6,
         image_size=[256, 704], feature_size=[32, 88],
@@ -241,13 +216,10 @@ def main():
             voxel_size=[0.075, 0.075, 0.2],
             grid_size=[1440, 1440, 41],
             max_points_per_voxel=10, max_voxels=160000,
-            sparse_shape_out=[180, 180, 2],  # (X, Y, Z) after conv_out
+            sparse_shape_out=[180, 180, 2],  # conv_out 后 (X, Y, Z)
             layers=sparse_layers,
         ),
-        vtransform=dict(
-            out_channels=80,
-            downsample_layers=ds_layers,
-        ),
+        vtransform=dict(out_channels=80, downsample_layers=ds_layers),
         head=dict(
             num_classes=10, num_proposals=200, nms_kernel_size=3,
             num_proposals_bev=180 * 180,
@@ -261,7 +233,7 @@ def main():
     with open(osp.join(out, "meta.json"), "w") as f:
         json.dump(meta, f, indent=1)
 
-    # ---- C++ key=value meta (meta.txt) -------------------------------
+    # C++ 键值 meta（meta.txt）
     lines = ["# dsb cpp inference meta (key = space-separated values)"]
     lines.append(f"B = {meta['B']}")
     lines.append(f"N = {meta['N']}")
@@ -271,9 +243,8 @@ def main():
     lines.append(f"feat_w = {meta['feature_size'][1]}")
     for k in ("xbound", "ybound", "zbound", "dbound"):
         lines.append(f"{k} = {' '.join(map(str, meta[k]))}")
-    nx = [int((meta['xbound'][1] - meta['xbound'][0]) / meta['xbound'][2]),
-          int((meta['ybound'][1] - meta['ybound'][0]) / meta['ybound'][2]),
-          int((meta['zbound'][1] - meta['zbound'][0]) / meta['zbound'][2])]
+    nx = [int((meta[k + 'bound'][1] - meta[k + 'bound'][0]) / meta[k + 'bound'][2])
+          for k in ("x", "y", "z")]
     lines.append(f"nx = {' '.join(map(str, nx))}")
     lc = meta["lidar"]
     lines.append(f"lidar_pcr = {' '.join(map(str, lc['point_cloud_range']))}")
@@ -295,9 +266,7 @@ def main():
     lines.append(f"head_score_thr = {hd['score_threshold']}")
     lines.append(f"sparse_layer_N = {len(lc['layers'])}")
     for ly in lc["layers"]:
-        k = ly["kernel"]
-        s = ly["stride"]
-        p = ly["pad"]
+        k, s, p = ly["kernel"], ly["stride"], ly["pad"]
         lines.append(
             f"{ly['type']} {ly['in_c']} {ly['out_c']} "
             f"{k[0]} {k[1]} {k[2]} {s[0]} {s[1]} {s[2]} {p[0]} {p[1]} {p[2]} "
