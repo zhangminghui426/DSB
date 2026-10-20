@@ -2,12 +2,18 @@
 
 #include "pipeline.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <string>
 
 using namespace dsb;
 
 namespace {
+
+using Clock = std::chrono::steady_clock;
+double ms(Clock::time_point a, Clock::time_point b) {
+  return std::chrono::duration<double, std::milli>(b - a).count();
+}
 
 void print_usage(const char *prog) {
   std::fprintf(stderr,
@@ -44,11 +50,22 @@ int main(int argc, char **argv) {
     std::printf("[dsb] B=%d N=%d depth_bins=%d\n", cfg.B, cfg.N,
                 cfg.depth_bins());
 
+    Clock::time_point t_load = Clock::now();
     InferencePipeline pipe(cfg);
     auto inputs = pipe.load(input_dir, engine_dir);
+    Clock::time_point t_infer = Clock::now();
+    std::printf("[dsb] [time] %-22s %8.2f ms\n", "load inputs+engines",
+                ms(t_load, t_infer));
     auto result = pipe.infer(inputs);
+    Clock::time_point t_verify = Clock::now();
+    std::printf("[dsb] [time] %-22s %8.2f ms\n", "infer (total)",
+                ms(t_infer, t_verify));
     pipe.verify(input_dir, result);
     if (!dump_dir.empty()) pipe.dump(result, dump_dir);
+    Clock::time_point t_done = Clock::now();
+    std::printf("[dsb] [time] %-22s %8.2f ms\n", "verify + dump",
+                ms(t_verify, t_done));
+    std::printf("[dsb] [time] %-22s %8.2f ms\n", "TOTAL", ms(t_load, t_done));
   } catch (const std::exception &e) {
     std::fprintf(stderr, "[dsb] ERROR: %s\n", e.what());
     return 1;

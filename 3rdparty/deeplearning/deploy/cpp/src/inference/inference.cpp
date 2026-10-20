@@ -6,6 +6,7 @@
 #include "ops/ops.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -17,6 +18,11 @@
 namespace dsb {
 
 namespace {
+
+using Clock = std::chrono::steady_clock;
+double ms(Clock::time_point a, Clock::time_point b) {
+  return std::chrono::duration<double, std::milli>(b - a).count();
+}
 
 std::string find_engine(const std::string &dir, const std::string &stem) {
   for (const char *ext : {".engine", ".trt", ".plan"}) {
@@ -106,16 +112,26 @@ Tensor Inferencer::camera_bev(const Tensor &depthnet,
                               const Preprocessor::Inputs &in) const {
   const int D = cfg_.depth_bins(), C = cfg_.vt_out_c;
   const int fH = cfg_.feat_h, fW = cfg_.feat_w;
+  Clock::time_point t0 = Clock::now();
+  auto stamp = [&](const char *tag) {
+    Clock::time_point t1 = Clock::now();
+    std::printf("[dsb] [time]   %-20s %8.2f ms\n", tag, ms(t0, t1));
+    t0 = t1;
+  };
   std::printf("[dsb] geometry + bev_pool ...\n");
   Tensor geom = compute_geometry(cfg_, in.camera2lidar, in.intrins, in.img_aug,
                                  in.lidar_aug);  // (6,D,fH,fW,3)
+  stamp("compute_geometry");
   Tensor x({cfg_.B, cfg_.N, D, fH, fW, C});
   fold_depth_features(cfg_, depthnet, x);
+  stamp("fold_depth_features");
   Tensor bev = bev_pool(cfg_, geom, x);  // (C, 360, 360)
+  stamp("bev_pool");
   bev.reshape({cfg_.B, C, bev.shape[1], bev.shape[2]});
   std::printf("[dsb]   bev_pool out %ldx%ldx%ld\n", (long)bev.shape[1],
               (long)bev.shape[2], (long)bev.shape[3]);
   Tensor cam_bev = downsample_conv(cfg_, bev, downsample_blob_);  // (1,80,180,180)
+  stamp("downsample_conv");
   std::printf("[dsb]   cam_bev %ldx%ldx%ldx%ld\n", (long)cam_bev.shape[0],
               (long)cam_bev.shape[1], (long)cam_bev.shape[2],
               (long)cam_bev.shape[3]);
@@ -124,10 +140,15 @@ Tensor Inferencer::camera_bev(const Tensor &depthnet,
 
 Tensor Inferencer::lidar_branch(const Preprocessor::Inputs &in) const {
   std::printf("[dsb] voxelize + sparse encoder ...\n");
+  Clock::time_point t0 = Clock::now();
   Tensor vfeats, vcoords, vsizes;
   Preprocessor(cfg_).voxelize(in, vfeats, vcoords, vsizes);
+  Clock::time_point t1 = Clock::now();
+  std::printf("[dsb] [time]   %-20s %8.2f ms\n", "voxelize", ms(t0, t1));
   Tensor lidar_bev = sparse_encoder_forward(cfg_, vfeats, vcoords, vsizes,
                                             sparse_blob_);
+  Clock::time_point t2 = Clock::now();
+  std::printf("[dsb] [time]   %-20s %8.2f ms\n", "sparse_encoder", ms(t1, t2));
   std::printf("[dsb]   lidar_bev %ldx%ldx%ld (voxels %ld)\n",
               (long)lidar_bev.shape[0], (long)lidar_bev.shape[1],
               (long)lidar_bev.shape[2], (long)vcoords.shape[0]);

@@ -3,6 +3,7 @@
 
 #include "pipeline.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -24,6 +25,11 @@ double rel_err(const Tensor &a, const Tensor &b) {
   return mx;  // max rel err
 }
 
+using Clock = std::chrono::steady_clock;
+double ms(Clock::time_point a, Clock::time_point b) {
+  return std::chrono::duration<double, std::milli>(b - a).count();
+}
+
 }  // namespace
 
 InferencePipeline::InferencePipeline(const Config &cfg)
@@ -40,6 +46,12 @@ Preprocessor::Inputs InferencePipeline::load(const std::string &input_dir,
 InferencePipeline::Result InferencePipeline::infer(
     const Preprocessor::Inputs &in) {
   Result out;
+  Clock::time_point t0 = Clock::now();
+  auto stamp = [&](const char *tag) {
+    Clock::time_point t1 = Clock::now();
+    std::printf("[dsb] [time] %-22s %8.2f ms\n", tag, ms(t0, t1));
+    t0 = t1;
+  };
 
   // ---- camera 分支 ------------------------------------------------------
   std::printf("[dsb] backbone ...\n");
@@ -47,26 +59,34 @@ InferencePipeline::Result InferencePipeline::infer(
   std::printf("[dsb]   feats %ldx%ldx%ldx%ldx%ld\n", (long)feats.shape[0],
               (long)feats.shape[1], (long)feats.shape[2], (long)feats.shape[3],
               (long)feats.shape[4]);
+  stamp("camera.backbone");
 
   std::printf("[dsb] project_depth ...\n");
   Tensor depth1 = preprocessor_.project_depth(in);  // (6,1,H,W)
   Tensor depth({cfg_.B, cfg_.N, 1, cfg_.image_h, cfg_.image_w});
   depth.data = depth1.data;
+  stamp("project_depth");
 
   std::printf("[dsb] vtransform ...\n");
   Tensor depthnet =
       inferencer_.camera_vtransform(feats, depth);  // (1,6,198,32,88)
+  stamp("camera.vtransform");
 
   out.cam_bev = inferencer_.camera_bev(depthnet, in);  // (1,80,180,180)
+  stamp("camera_bev (total)");
 
   // ---- lidar 分支 --------------------------------------------------------
   out.lidar_bev = inferencer_.lidar_branch(in);  // (1,256,180,180)
+  stamp("lidar_branch (total)");
 
   // ---- fuser + head ------------------------------------------------------
   out.decoder_feat =
       inferencer_.fuser(out.cam_bev, out.lidar_bev);  // (1,512,180,180)
+  stamp("fuser");
+
   out.det = postprocessor_.decode(inferencer_.head(out.decoder_feat));
   std::printf("[dsb] det boxes: %ld\n", (long)out.det.boxes.shape[0]);
+  stamp("head.bbox + decode");
   return out;
 }
 
