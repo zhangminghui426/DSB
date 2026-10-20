@@ -101,9 +101,12 @@ class EngineBuilder:
                       "(requires nvidia-modelopt).")
 
         # Invoke trtexec as a shell command line (the standard form).
+        # --profilingVerbosity=detailed: 层信息完整（trt_perf validate 要求），
+        # 不影响引擎行为，仅增加 profiling 元数据。
         cmd = (f"{shlex.quote(self.exe)} "
                f"--onnx={shlex.quote(osp.abspath(src))} "
-               f"--saveEngine={shlex.quote(osp.abspath(engine_path))}")
+               f"--saveEngine={shlex.quote(osp.abspath(engine_path))} "
+               f"--profilingVerbosity=detailed")
         if fp16 and not strong:
             cmd += " --fp16"
         print("[trt] " + cmd)

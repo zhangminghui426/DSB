@@ -42,14 +42,18 @@ for g in $GRAPHS; do
 ($DL/deploy/launch/infer_trt.sh ... --build)" >&2; exit 2; }
   work="$PERF_DIR/_work_$g"
   rm -rf "$work"; mkdir -p "$work"
+  # --dumpProfile/--dumpLayerInfo 只打印日志；落盘需 --exportProfile/
+  # --exportLayerInfo（TRT 10/11 通用，文件名由 =<file> 显式指定）
   ( cd "$work" && "$TRTEXEC" --loadEngine="$OLDPWD/$engine" \
-      --dumpProfile --dumpLayerInfo \
+      --exportLayerInfo=layers.json --exportProfile=profile.json \
       --warmUp=500 --iterations=50 --noDataTransfers >/dev/null )
-  layer=$(ls "$work"/layers*.json 2>/dev/null | head -1)
-  prof=$(ls "$work"/profile*.json 2>/dev/null | head -1)
-  [ -n "$layer" ] && mv "$layer" "$PERF_DIR/layers_$g.json"
-  [ -n "$prof" ] && mv "$prof" "$PERF_DIR/profile_$g.json"
+  [ -f "$work/layers.json" ] && mv "$work/layers.json" "$PERF_DIR/layers_$g.json"
+  [ -f "$work/profile.json" ] && mv "$work/profile.json" "$PERF_DIR/profile_$g.json"
   rm -rf "$work"
+  [ -f "$PERF_DIR/layers_$g.json" ] || { echo \
+    "error: layers_$g.json not produced (trtexec --exportLayerInfo failed)" >&2; exit 2; }
+  [ -f "$PERF_DIR/profile_$g.json" ] || { echo \
+    "error: profile_$g.json not produced (trtexec --exportProfile failed)" >&2; exit 2; }
   echo "[perf] dumped $g -> layers_$g.json / profile_$g.json"
 done
 
