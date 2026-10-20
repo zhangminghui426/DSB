@@ -1,4 +1,4 @@
-# DeepLearing（BEVFusion + FlashOCC 重写）
+# DeepLearning（BEVFusion + FlashOCC 重写）
 
 纯 PyTorch 统一感知模型库，零 mmcv 依赖。覆盖：
 
@@ -21,8 +21,8 @@ deeplearning/
 │   └── calib_board_detector/  # 标定板检测器（SECOND）
 ├── datasets/          # 数据集与数据处理
 ├── scripts/           # 训练/评估/测试脚本（仅 .py）
-├── deploy/            # 导出/构建/推理包（export/builder/runtime/config/graphs + preprocess/inference/postprocess/pipeline）
-├── launch/            # shell 启动脚本（train/eval/export/infer_trt/perf_trt/visualize）
+├── deploy/            # TRT 部署：python/（导出/构建/推理包）、cpp/、tools/、launch/
+├── launch/            # 模型库启动脚本（prepare_data/train/eval/visualize/env.sh）
 ├── configs/           # 训练与部署配置
 ├── ops/               # 自定义 CUDA 算子（bev_pool_v2 / voxel / iou3d）
 ├── tools/             # 数据准备与输入导出工具
