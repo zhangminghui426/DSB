@@ -1,5 +1,8 @@
 # dsb_infer（C++ 推理，3rdparty/deeplearning/deploy/cpp）
 
+部署总览（前置导出 / Python 推理 / 启动脚本 / 性能分析）见
+[`../README.md`](../README.md)。
+
 C++ 端到端推理：加载 TRT engine，复用与 `deploy/python/pipeline.py` 相同的
 图拆分（`deploy/python/graphs.py`），CPU 侧实现 camera 几何 / bev_pool /
 降采样、lidar 体素化 + 稀疏编码，det 解码在 CPU 完成。

@@ -2,6 +2,7 @@
 
 交互式 HTML 性能报告工具，来自 NVIDIA/TensorRT 官方仓库的
 `.agents/skills/trt-perf-analysis`（Apache-2.0，本目录随仓库分发以便离线使用）。
+部署整体流程见 [`../../README.md`](../../README.md)。
 
 ## 输入
 

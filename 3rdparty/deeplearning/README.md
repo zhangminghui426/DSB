@@ -21,7 +21,7 @@ deeplearning/
 │   └── calib_board_detector/  # 标定板检测器（SECOND）
 ├── datasets/          # 数据集与数据处理
 ├── scripts/           # 训练/评估/测试脚本（仅 .py）
-├── deploy/            # TRT 部署：python/（导出/构建/推理包）、cpp/、tools/、launch/
+├── deploy/            # TRT 部署（见 deploy/README.md）：export.py 前置导出 + python/ + cpp/ + tools/ + launch/
 ├── launch/            # 模型库启动脚本（prepare_data/train/eval/visualize/env.sh）
 ├── configs/           # 训练与部署配置
 ├── ops/               # 自定义 CUDA 算子（bev_pool_v2 / voxel / iou3d）
@@ -67,84 +67,18 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 
 ## 部署（ONNX 分模块导出 + TensorRT 推理）
 
-模型按 CUDA-BEVFusion 布局**分模块导出**（det/seg 各 4 张图），自定义 CUDA
-算子（bev_pool / 体素化 / sparse conv）留在 torch runtime，不进入 ONNX：
-
-| 图 | 输入 → 输出 | 说明 |
-|---|---|---|
-| `camera.backbone.onnx` | img `(1,6,3,256,704)` → feats `(1,6,256,32,88)` | Swin-T + LSS-FPN |
-| `camera.vtransform.onnx` | feats (+depth) → depthnet `(1,6,D+C,32,88)` | det 含 dtransform |
-| `fuser.onnx` | cam_bev + lidar_bev → decoder_feat `(1,512,180,180)` | fuser+SECOND+FPN |
-| `head.bbox/map.onnx` | decoder_feat → 9 个 pred（含 query_labels）/ masks | 不解码，decode 留在 torch |
+详见 [`deploy/README.md`](deploy/README.md)：前置导出（export.py，Python/C++
+共用）、Python/C++ 推理、启动脚本、性能分析与 TRT 版本说明。
 
 ```bash
-# 1. 导出 ONNX 并构建 TRT engine（Python/C++ 推理共用的前置步骤；--verify 用
-#    onnxruntime 逐图校验；engine 构建只走 trtexec CLI，$TRTEXEC 或
-#    PATH，pip-only tensorrt 无 trtexec 时需 TRTEXEC=/path/to/TensorRT-10.9.../bin/trtexec）
+# 1. 前置导出：ONNX 分模块导出 + trtexec 构建 engine（Python/C++ 共用）
 python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --task det --verify --fp16
 
-# 2. TRT 推理并保存解码结果（直接用 engine，不需要 .pth；
-#    与 torch 参考对照再加 --checkpoint ... --verify）
+# 2. TRT 推理（直接用 engine，不需要 .pth；对照 torch 加 --checkpoint ... --verify）
 python deploy/python/pipeline.py configs/det_convfuser.py \
     --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
 ```
-
-launch 启动脚本：模型库脚本在 `launch/`（与 `scripts/` 的 .py 分离），
-TRT 推理部署脚本在 `deploy/launch/`（与 `deploy/python`、`deploy/cpp` 同属
-`deploy/`，本目录内调用）：
-
-```bash
-launch/prepare_data.sh            # 数据软链接 + infos pkl 生成
-launch/train.sh det               # 训练（det|seg|multitask|occ|m0|stereo|stbase）
-launch/eval.sh det                # 评估
-launch/visualize.sh det           # 可视化
-bash deploy/launch/export.sh det              # 导出 ONNX
-bash deploy/launch/infer_trt.sh det           # TRT 推理（--verify --checkpoint 透传）
-bash deploy/launch/visualize_trt.sh det       # TRT 推理结果可视化（jpg/gif -> outputs/vis/）
-bash deploy/launch/perf_trt.sh det            # trtexec 采集逐层 profile -> outputs/perf/
-```
-
-性能分析（NVIDIA trt-perf-analysis 工具随仓库分发到 `deploy/tools/trt_perf/`）：
-
-```bash
-bash deploy/launch/perf_trt.sh det            # -> outputs/perf/layers_*.json + profile_*.json
-bash deploy/tools/trt_perf/run.sh             # 生成交互式 HTML 报告 -> outputs/perf/report/
-```
-
-TRT 强类型说明（TRT >= 10.12 / 11.x）：精度由 ONNX 图表达（Cast/QDQ），
-`BuilderFlag.FP16/INT8` 已移除；FP32 ONNX 构建 FP32 engine。需要混合 FP16
-时先用 ModelOpt AutoCast（`pip install nvidia-modelopt`），或在
-`builder.py`/`pipeline.py` 加 `--autocast-fp16`。TRT < 10.12（docker 目标
-10.9.0.34）自动回退弱类型，`--fp16` 照常生效（版本在构建时探测）。
-
-## 推理结果可视化
-
-TRT 推理结果渲染到 `outputs/vis/`（与模型/ckpt 目录分离，jpg + gif）：
-
-```bash
-# 现场跑 TRT 推理并可视化：单帧（BEV + 6 相机投影 jpg）
-bash deploy/launch/visualize_trt.sh --sample-index 5
-
-# 多帧时间序列：连续渲染 10 帧（同一场景连续 sweep），另存 seq gif
-bash deploy/launch/visualize_trt.sh --sample-index 5 --frames 10 --fps 4
-
-# 复用已 dump 的 npz（跳过模型推理，仅渲染；checkpoint 可省略，单帧）
-python deploy/python/visualize.py configs/det_convfuser.py \
-    --npz outputs/trt/sample5.npz --sample-index 5 --out outputs/vis
-```
-
-输出：
-
-```
-outputs/vis/
-  sample5_det.jpg             # 单帧：BEV 鸟瞰 + 6 相机视图（3D 框投影，含类别/分数）
-  sample5-14_seq.gif          # --frames 10：时间序列动画（默认 fps 4）
-```
-
-可选参数：`--score_thr 0.3`（过滤低分框）、`--max_boxes 40`（最多框数）、
-`--stride 1`（帧间隔，用于降采样）。渲染复用 `scripts/render.py`
-（与 torch 侧 `scripts/visualize.py` 同一套绘图）。
 
 ## 模型 I/O 约定
 

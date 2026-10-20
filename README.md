@@ -83,7 +83,8 @@ cd 3rdparty/deeplearning/models/calib_board_detector && python train.py
 
 ## 详细文档
 
-- `3rdparty/deeplearning/README.md` — 模型库结构、训练/评估、ONNX 导出与 TRT 部署细节
+- `3rdparty/deeplearning/README.md` — 模型库结构、训练/评估
+- `3rdparty/deeplearning/deploy/README.md` — TRT 部署（前置导出 / Python / C++ 推理 / 性能分析）
 - `3rdparty/deeplearning/deploy/cpp/README.md` — C++ 推理流水线、编译与运行
 - `3rdparty/deeplearning/deploy/tools/trt_perf/README.md` — TRT 逐层性能分析
 - `docs/MODEL_IO.md` — 模型 I/O 约定
