@@ -41,8 +41,9 @@ def log_to_terminal(msg: str):
 def parse_cam_intrinsic(text: str):
     """解析内参文本，返回 (cam_type, K, dist)。
 
-    支持两种格式：
+    支持三种格式：
       - YAML：camera_intrinsic: {type, K, dist}（或顶层 type/K/dist）
+      - 厂商标定文件（key= value）：type / fx fy cx cy / k1..k6 / p1 p2
       - 纯文本：3x3 K 矩阵 + 1 行 dist；或 1 行 fx fy cx cy + 1 行 dist
     解析失败时返回 (None, None, None)。
     """
@@ -66,6 +67,31 @@ def parse_cam_intrinsic(text: str):
                     return cam_type, ci.get("K"), ci.get("dist")
         except Exception:
             pass
+
+    # 厂商标定文件：type= pinhole / fx= ... / k1= ...（海康/大华导出格式）
+    kv = {}
+    cam_type = "fisheye"
+    for ln in text.splitlines():
+        m = re.match(r"^\s*([A-Za-z_][\w]*)\s*=\s*([-\d.eE+]+)\s*$", ln)
+        if m:
+            try:
+                kv[m.group(1).lower()] = float(m.group(2))
+            except ValueError:
+                continue
+        m2 = re.match(r"^\s*type\s*=\s*(\w+)", ln, re.IGNORECASE)
+        if m2 and m2.group(1).lower() in ("fisheye", "pinhole"):
+            cam_type = m2.group(1).lower()
+    if kv.get("fx") is not None and kv.get("fy") is not None:
+        K = [[kv["fx"], 0.0, kv.get("cx", 0.0)],
+             [0.0, kv["fy"], kv.get("cy", 0.0)],
+             [0.0, 0.0, 1.0]]
+        if cam_type == "fisheye":
+            dist = [kv[k] for k in ("k1", "k2", "k3", "k4") if k in kv]
+        else:
+            dist = [kv[k] for k in ("k1", "k2", "p1", "p2", "k3") if k in kv]
+        if len(dist) not in (4, 5):
+            dist = [kv.get("k1", 0.0), kv.get("k2", 0.0), 0.0, 0.0]
+        return cam_type, K, dist
 
     cam_type, K, dist = "fisheye", None, None
     m = re.search(r"^\s*type\s*:\s*(\w+)", text, re.MULTILINE)
@@ -162,7 +188,8 @@ with st.sidebar:
     # 2. 相机内参
     st.subheader("2. 相机内参")
     uploaded_cam = st.file_uploader(
-        "上传 内参.txt (YAML: type/K/dist 或 fx fy cx cy + dist)", type=["txt"])
+        "上传 内参.txt (厂商标定 key=value / YAML type/K/dist / fx fy cx cy + dist)",
+        type=["txt"])
     cam_type = st.session_state.get("cam_type", "fisheye")
     if uploaded_cam is not None:
         cam_content = uploaded_cam.read().decode("utf-8")
