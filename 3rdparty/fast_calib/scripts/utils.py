@@ -100,7 +100,10 @@ def _parse_stats_counts(buf, off, new_spec):
 
 
 def _decompress(records, compression):
-    c = (compression or "").lower()
+    c = (compression or "")
+    if isinstance(c, bytes):
+        c = c.decode("utf-8", "replace")
+    c = c.lower()
     if c in ("", "none"):
         return records
     try:
@@ -312,11 +315,19 @@ def iter_mcap_messages(mcap_path, topics=None):
                 elif opcode == ops["message"]:
                     chan = cid2chan.get(struct.unpack_from("<H", buf, off)[0])
                     if chan is not None and (topics is None or chan.topic in topics):
-                        lt = struct.unpack_from("<Q", buf, off + 2)[0]
-                        pt = struct.unpack_from("<Q", buf, off + 10)[0]
+                        if ops["new"]:
+                            # 新规范: cid(u16)+sequence(u32)+log_time(u64)+publish_time(u64)+data
+                            lt = struct.unpack_from("<Q", buf, off + 6)[0]
+                            pt = struct.unpack_from("<Q", buf, off + 14)[0]
+                            hdr = 22
+                        else:
+                            # 老规范: cid(u16)+log_time(u64)+publish_time(u64)+data
+                            lt = struct.unpack_from("<Q", buf, off + 2)[0]
+                            pt = struct.unpack_from("<Q", buf, off + 10)[0]
+                            hdr = 18
                         m = _Message()
                         m.channel_id, m.log_time, m.publish_time = chan.id, lt, pt
-                        m.data = buf[off + 18:off + length]
+                        m.data = buf[off + hdr:off + length]
                         yield (sid2sch.get(chan.schema_id), chan, m)
                 elif opcode == ops["chunk"]:
                     o = off + 24
