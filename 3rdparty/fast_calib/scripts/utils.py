@@ -54,17 +54,25 @@ def _parse_schema(buf, off):
     return sid, name
 
 
-def _parse_channel(buf, off):
+def _parse_channel(buf, off, new_spec):
     cid = struct.unpack_from("<H", buf, off)[0]
     schema_id = struct.unpack_from("<H", buf, off + 2)[0]
     off += 4
     topic, off = _read_str(buf, off)
     _, off = _read_str(buf, off)  # message_encoding
-    n_meta = struct.unpack_from("<I", buf, off)[0]
+    n = struct.unpack_from("<I", buf, off)[0]
     off += 4
-    for _ in range(n_meta):
-        _, off = _read_str(buf, off)
-        _, off = _read_str(buf, off)
+    if new_spec:
+        # metadata 为字节长度前缀 + (prefixed_string, prefixed_string)*
+        end = off + n
+        while off < end:
+            _, off = _read_str(buf, off)
+            _, off = _read_str(buf, off)
+    else:
+        # 老规范 metadata 为条目数
+        for _ in range(n):
+            _, off = _read_str(buf, off)
+            _, off = _read_str(buf, off)
     return cid, topic, schema_id
 
 
@@ -98,7 +106,10 @@ def _decompress(records, compression):
     try:
         if c == "zstd":
             import zstandard
-            return zstandard.ZstdDecompressor().decompress(records)
+            # 部分写入器(rosbag2/mcap-cpp)的 zstd 帧不带 content size，
+            # 用流式解压兼容两种
+            dctx = zstandard.ZstdDecompressor()
+            return dctx.decompressobj().decompress(records)
         if c == "lz4":
             import lz4.frame
             return lz4.frame.decompress(records)
@@ -113,34 +124,37 @@ def _scan_records(buf, start, end, ops, sid2name, cid2topic, cid2sid, cnt):
     for opcode, off, length in _iter_records(buf, start):
         if off + length > end:
             break
-        if opcode == _OP_SCHEMA:
-            sid, name = _parse_schema(buf, off)
-            sid2name[sid] = name
-        elif opcode == _OP_CHANNEL:
-            cid, topic, schema_id = _parse_channel(buf, off)
-            cid2topic[cid] = topic
-            cid2sid[cid] = schema_id
-        elif opcode == ops["chunk"]:
-            # 头部: start(u64) end(u64) uncompressed_size(u64)
-            #       [uncompressed_crc(u32) 仅新规范] compression(str) records(bytes u64)
-            o = off + 8 + 8 + 8
-            if ops["new"]:
-                o += 4  # uncompressed_crc
-            compression, o = _read_str(buf, o)
-            rlen = struct.unpack_from("<Q", buf, o)[0]
-            o += 8
-            dec = _decompress(buf[o:o + rlen], compression)
-            if dec is not None:
-                _scan_records(dec, 0, len(dec), ops, sid2name, cid2topic, cid2sid, cnt)
-        elif opcode == ops["message"]:
-            cid = struct.unpack_from("<H", buf, off)[0]
-            topic = cid2topic.get(cid)
-            if topic is not None:
-                cnt[topic] += 1
-        elif opcode == _OP_MSG_INDEX:
-            pass  # 与 Message 记录同批消息，避免重复计数
-        elif opcode == ops["data_end"]:
-            break
+        try:
+            if opcode == _OP_SCHEMA:
+                sid, name = _parse_schema(buf, off)
+                sid2name[sid] = name
+            elif opcode == _OP_CHANNEL:
+                cid, topic, schema_id = _parse_channel(buf, off, ops["new"])
+                cid2topic[cid] = topic
+                cid2sid[cid] = schema_id
+            elif opcode == ops["chunk"]:
+                # 头部: start(u64) end(u64) uncompressed_size(u64)
+                #       [uncompressed_crc(u32) 仅新规范] compression(str) records(bytes u64)
+                o = off + 8 + 8 + 8
+                if ops["new"]:
+                    o += 4  # uncompressed_crc
+                compression, o = _read_str(buf, o)
+                rlen = struct.unpack_from("<Q", buf, o)[0]
+                o += 8
+                dec = _decompress(buf[o:o + rlen], compression)
+                if dec is not None:
+                    _scan_records(dec, 0, len(dec), ops, sid2name, cid2topic, cid2sid, cnt)
+            elif opcode == ops["message"]:
+                cid = struct.unpack_from("<H", buf, off)[0]
+                topic = cid2topic.get(cid)
+                if topic is not None:
+                    cnt[topic] += 1
+            elif opcode == _OP_MSG_INDEX:
+                pass  # 与 Message 记录同批消息，避免重复计数
+            elif opcode == ops["data_end"]:
+                break
+        except Exception:
+            continue  # 单条记录解析失败时跳过，不拖垮整体扫描
 
 
 def _manual_scan(mcap_path):
@@ -148,8 +162,8 @@ def _manual_scan(mcap_path):
     Statistics 或数据区 Message/MessageIndex 补计数。"""
     with open(mcap_path, "rb") as f:
         data = f.read()
-    magic = next((m for m in _MCAP_MAGICS
-                  if data.startswith(m) and data.endswith(m)), None)
+    # 仅要求头部 magic 匹配（尾部可能因未封口/截断缺失）
+    magic = next((m for m in _MCAP_MAGICS if data.startswith(m)), None)
     if magic is None:
         return []
     ops = _OP_TABLES[magic]
@@ -175,7 +189,7 @@ def _manual_scan(mcap_path):
                     sid, name = _parse_schema(data, off)
                     sid2name[sid] = name
                 elif opcode == _OP_CHANNEL:
-                    cid, topic, schema_id = _parse_channel(data, off)
+                    cid, topic, schema_id = _parse_channel(data, off, ops["new"])
                     cid2topic[cid] = topic
                     cid2sid[cid] = schema_id
                 elif opcode == ops["stats"]:
