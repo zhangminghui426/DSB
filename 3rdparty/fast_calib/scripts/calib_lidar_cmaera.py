@@ -721,11 +721,15 @@ if __name__ == "__main__":
     board_detector = None
     second_cfg = cfg.get("second_detector", {})
     if second_cfg.get("enabled", False) and SECONDBoardDetector is not None:
-        logging.info(f"loading SECOND detector: {second_cfg['model_path']}")
-        board_detector = SECONDBoardDetector(
-            second_cfg["model_path"],
-            score_thr=second_cfg.get("score_thr", 0.3),
-        )
+        try:
+            logging.info(f"loading SECOND detector: {second_cfg['model_path']}")
+            board_detector = SECONDBoardDetector(
+                second_cfg["model_path"],
+                score_thr=second_cfg.get("score_thr", 0.3),
+            )
+        except Exception as e:
+            logging.warning(f"SECOND 检测器加载失败 ({e}), 回退手动 ROI")
+            board_detector = None
 
     calibrator = FastCalibLidarCamCalibrator(
         hole_centers_board=hole_centers_board,

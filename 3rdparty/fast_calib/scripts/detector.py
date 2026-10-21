@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import Optional, Tuple
@@ -117,7 +118,14 @@ class SECONDBoardDetector(CalibrationBoardDetector):
     """SECOND 标定板检测器, 输出 3D 框 ROI。"""
 
     def __init__(self, model_path: str, score_thr: float = None):
-        self.device = torch.device("cpu")
+        # spconv 稀疏卷积 implicit_gemm 后端仅支持 CUDA；无 GPU 时
+        # 推理会失败并由 detect() 回退手动 ROI。
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda:0")
+        else:
+            self.device = torch.device("cpu")
+            logging.warning(
+                "CUDA 不可用: spconv 稀疏卷积仅支持 CUDA, SECOND 检测将回退手动 ROI")
 
         # 加载配置
         cfg = _load_config(model_path)
@@ -164,9 +172,11 @@ class SECONDBoardDetector(CalibrationBoardDetector):
         loc = loc_pred.view(num_rot, 7, Dy, Dx).permute(2, 3, 0, 1).contiguous()
         scores = torch.sigmoid(cls_pred.permute(1, 2, 0).contiguous())
 
-        ax, ay, az = self.anchors[..., 0], self.anchors[..., 1], self.anchors[..., 2]
-        aw, al, ah = self.anchors[..., 3], self.anchors[..., 4], self.anchors[..., 5]
-        ayaw = self.anchors[..., 6]
+        # anchors 与 loc 需同设备（GPU 下 numpy 不能直接与 cuda tensor 运算）
+        anchors = torch.as_tensor(self.anchors, dtype=torch.float32, device=self.device)
+        ax, ay, az = anchors[..., 0], anchors[..., 1], anchors[..., 2]
+        aw, al, ah = anchors[..., 3], anchors[..., 4], anchors[..., 5]
+        ayaw = anchors[..., 6]
         dx, dy, dz, dw, dl, dh, dyaw = loc.unbind(dim=-1)
 
         pred_x = ax + dx * aw
@@ -236,10 +246,14 @@ class SECONDBoardDetector(CalibrationBoardDetector):
         vc_t = torch.from_numpy(vc).unsqueeze(0).to(self.device)
         np_t = torch.from_numpy(np_pts).unsqueeze(0).to(self.device)
 
-        with torch.no_grad():
-            cls_pred, loc_pred = self.model(
-                vf_t, vc_t, np_t, self.voxel_size, self.point_cloud_range,
-            )
+        try:
+            with torch.no_grad():
+                cls_pred, loc_pred = self.model(
+                    vf_t, vc_t, np_t, self.voxel_size, self.point_cloud_range,
+                )
+        except Exception as e:
+            logging.warning(f"SECOND 推理失败 ({e}), 回退手动 ROI")
+            return False, None
 
         result = self._decode(cls_pred[0], loc_pred[0])
         if result is None:

@@ -437,10 +437,16 @@ with tab4:
                 else:
                     st.info(f"有效点云: {len(pts)} pts")
 
-                    # 运行 SECOND 检测器
+                    # 运行 SECOND 检测器（加载/推理失败时回退手动 ROI）
                     model_path = str("/tmp/best_model.pth")
-                    detector = SECONDBoardDetector(model_path=model_path, score_thr=second_score_thr)
-                    ok, roi = detector.detect(pts)
+                    detector = None
+                    try:
+                        detector = SECONDBoardDetector(model_path=model_path, score_thr=second_score_thr)
+                        ok, roi = detector.detect(pts)
+                    except Exception as e:
+                        st.warning(f"SECOND 检测失败 ({e}), 使用手动 ROI")
+                        ok = False
+                        roi = None
 
                     if ok and roi is not None:
                         (xmin, xmax), (ymin, ymax), (zmin, zmax) = roi
