@@ -226,17 +226,27 @@ def _manual_scan(mcap_path):
 
 
 def _parse_schema_full(buf, rec_off, length):
-    """完整解析 Schema record（含 data 段，data 到记录末尾）。
-    返回鸭子类型对象（id/name/encoding/data），不依赖 mcap.records 构造，
-    兼容不同版本 mcap 库，可直接交给解码器。"""
+    """完整解析 Schema record（含 data 段）。data 为长度前缀 + 定义文本：
+    实测 libmcap 0.8 / mcap python 库用 u32 前缀，老规范为 u64，
+    用记录边界校验选择；异常时退化为整体尾部。"""
     class _Schema:
         __slots__ = ("id", "name", "encoding", "data")
     sid = struct.unpack_from("<H", buf, rec_off)[0]
     off = rec_off + 2
     name, off = _read_str(buf, off)
     encoding, off = _read_str(buf, off)
+    end = rec_off + length
+    n32 = struct.unpack_from("<I", buf, off)[0]
+    if off + 4 + n32 <= end:
+        data = buf[off + 4:off + 4 + n32]
+    else:
+        n64 = struct.unpack_from("<Q", buf, off)[0]
+        if off + 8 + n64 <= end:
+            data = buf[off + 8:off + 8 + n64]
+        else:
+            data = buf[off:end]
     s = _Schema()
-    s.id, s.name, s.encoding, s.data = sid, name, encoding, buf[off:rec_off + length]
+    s.id, s.name, s.encoding, s.data = sid, name, encoding, data
     return s
 
 
