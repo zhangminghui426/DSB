@@ -265,7 +265,7 @@ with st.sidebar:
     terminal_box.code(st.session_state["terminal_log"], language="bash", height=300)
 
 # ==================== 主界面 ====================
-tab1, tab2, tab3, tab4 = st.tabs(["标定运行", "可视化质检", "结果输出", "3D点云预览"])
+tab1, tab2, tab3, tab4 = st.tabs(["标定运行", "可视化质检", "结果输出", "预览"])
 
 # 日志与运行状态持久化（切换 tab / rerun 后仍保留）
 if "calib_log" not in st.session_state:
@@ -505,15 +505,25 @@ with tab3:
         for f in result_dir.glob("*.npy"):
             st.subheader(f.name)
             T = np.load(f)
+            R = T[:3, :3]
+            t = T[:3, 3].reshape(3, 1)
             st.write("旋转矩阵 R:")
-            st.write(T[:3, :3])
+            st.write(R)
             st.write("平移向量 t:")
-            st.write(T[:3, 3])
+            st.write(t.reshape(3))
+            # 可直接复制的结果文本（st.code 自带复制按钮）
+            txt = (
+                f"# {f.name}  lidar->camera 外参\n"
+                f"R = {R.tolist()}\n"
+                f"t = {t.reshape(3).tolist()}\n"
+                f"T = {T.tolist()}\n"
+            )
+            st.code(txt, language="python")
     else:
         st.info("暂无结果, 请先运行标定")
 
 with tab4:
-    st.header("3D点云预览")
+    st.header("预览")
 
     # 支持两种输入：mcap 帧 或 上传 pcd
     input_mode = st.radio("输入方式", ["上传 pcd 文件", "从 mcap 读帧"], horizontal=True)
@@ -608,8 +618,8 @@ with tab4:
                 total_frames += 1
             st.info(f"mcap 共 {total_frames} 帧点云")
 
-            # 单帧可视化
-            st.subheader("单帧可视化")
+            # 单帧预览
+            st.subheader("单帧预览")
             frame_idx = st.number_input("帧号", 0, max(total_frames - 1, 0), 0, 1)
             if st.button("渲染该帧"):
                 import cv2
@@ -627,6 +637,7 @@ with tab4:
 
                 # 读指定帧的点云 (按字段 offset 正确解析)
                 pts = None
+                lidar_ts = None
                 for i, (schema, channel, msg, ros_msg) in enumerate(
                     iter_decoded_messages_robust(
                         mcap_file, topics=[lidar_topic],
@@ -635,12 +646,48 @@ with tab4:
                 ):
                     if i == frame_idx:
                         pts = pointcloud2_to_xyzi(ros_msg, dtype_map)
+                        lidar_ts = msg.log_time
                         break
 
                 if pts is None:
                     st.error(f"帧 {frame_idx} 超出范围")
                 else:
                     st.info(f"有效点云: {len(pts)} pts")
+
+                    # 图像中间结果：取时间最接近该雷达帧的相机帧并解码显示
+                    cam_topics = st.session_state.get("cam_topics_sel", [])
+                    if cam_topics:
+                        from calib_lidar_cmaera import CompressedVideoDecoder
+                        cam_topic = cam_topics[0]
+                        format_map = {"h264": "h264", "h265": "hevc", "hevc": "hevc",
+                                      "avc1": "h264", "x264": "h264"}
+                        best = None
+                        best_dt = None
+                        for sc, ch, m, ros in iter_decoded_messages_robust(
+                            mcap_file, topics=[cam_topic],
+                            decoder_factories=[DecoderFactory()]
+                        ):
+                            if best is None or abs(m.log_time - lidar_ts) < best_dt:
+                                best = (sc, ch, m, ros)
+                                best_dt = abs(m.log_time - lidar_ts)
+                        if best is not None:
+                            sc, ch, m, ros = best
+                            try:
+                                video_dec = CompressedVideoDecoder(ros.format, format_map)
+                                frames = video_dec.decode(bytes(ros.data), m.log_time)
+                                if frames:
+                                    t_img, bgr = frames[-1]
+                                    st.subheader("图像中间结果")
+                                    dt_ms = abs(m.log_time - lidar_ts) / 1e6
+                                    st.caption(f"{cam_topic}  · 时间差 {dt_ms:.1f} ms")
+                                    st.image(bgr, channels="BGR",
+                                             use_container_width=True)
+                                else:
+                                    st.warning("该相机帧解码失败（无输出帧）")
+                            except Exception as e:
+                                st.warning(f"图像解码失败: {e}")
+                    else:
+                        st.info("未选择相机话题，跳过图像中间结果")
 
                     # 运行 SECOND 检测器（加载/推理失败时回退手动 ROI）
                     model_path = str("/tmp/best_model.pth")
