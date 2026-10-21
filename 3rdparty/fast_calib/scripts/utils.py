@@ -227,8 +227,8 @@ def _manual_scan(mcap_path):
 
 def _parse_schema_full(buf, rec_off, length):
     """完整解析 Schema record（含 data 段）。data 为长度前缀 + 定义文本：
-    实测 libmcap 0.8 / mcap python 库用 u32 前缀，老规范为 u64，
-    用记录边界校验选择；异常时退化为整体尾部。"""
+    libmcap 0.8 / mcap python 库用 u32 前缀，老规范为 u64；
+    用记录边界严格相等校验选择，异常时退化为整体尾部。"""
     class _Schema:
         __slots__ = ("id", "name", "encoding", "data")
     sid = struct.unpack_from("<H", buf, rec_off)[0]
@@ -237,11 +237,11 @@ def _parse_schema_full(buf, rec_off, length):
     encoding, off = _read_str(buf, off)
     end = rec_off + length
     n32 = struct.unpack_from("<I", buf, off)[0]
-    if off + 4 + n32 <= end:
+    if off + 4 + n32 == end:
         data = buf[off + 4:off + 4 + n32]
     else:
         n64 = struct.unpack_from("<Q", buf, off)[0]
-        if off + 8 + n64 <= end:
+        if off + 8 + n64 == end:
             data = buf[off + 8:off + 8 + n64]
         else:
             data = buf[off:end]
@@ -304,10 +304,11 @@ def iter_mcap_messages(mcap_path, topics=None):
             try:
                 if opcode == _OP_SCHEMA:
                     sch = _parse_schema_full(buf, off, length)
-                    sid2sch[sch.id] = sch
+                    # 首次出现为准：尾部损坏 chunk 的错位 record 不得污染定义
+                    sid2sch.setdefault(sch.id, sch)
                 elif opcode == _OP_CHANNEL:
                     chan = _parse_channel_full(buf, off, ops["new"])
-                    cid2chan[chan.id] = chan
+                    cid2chan.setdefault(chan.id, chan)
                 elif opcode == ops["message"]:
                     chan = cid2chan.get(struct.unpack_from("<H", buf, off)[0])
                     if chan is not None and (topics is None or chan.topic in topics):
@@ -333,6 +334,30 @@ def iter_mcap_messages(mcap_path, topics=None):
                 continue  # 坏记录跳过，不拖垮整体
 
     yield from handle(data, len(magic), len(data))
+
+
+def iter_decoded_messages_robust(mcap_path, topics=None, decoder_factories=None):
+    """解码迭代：优先走官方 mcap 库（与 iter_decoded_messages 一致，
+    正常文件零回归）；get_summary 在截断/未封口文件上崩溃时，
+    回退到内置数据区迭代（iter_mcap_messages）+ 同一批解码器。
+    产出 (schema, channel, message, ros_msg) 四元组。"""
+    factories = decoder_factories or []
+    try:
+        with open(mcap_path, "rb") as f:
+            reader = make_reader(f, decoder_factories=factories)
+            for schema, channel, message, ros_msg in reader.iter_decoded_messages(topics=topics):
+                yield schema, channel, message, ros_msg
+        return
+    except Exception as e:
+        logging.warning(f"mcap 库迭代失败 ({e}), 回退内置数据区迭代")
+    for schema, chan, msg in iter_mcap_messages(mcap_path, topics=topics):
+        decoded = None
+        for factory in factories:
+            decoder = factory.decoder_for(chan.message_encoding, schema)
+            if decoder is not None:
+                decoded = decoder(msg.data)
+                break
+        yield schema, chan, msg, decoded
 
 
 def scan_mcap_channels(mcap_path) -> list:

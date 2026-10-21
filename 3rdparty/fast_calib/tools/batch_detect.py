@@ -16,14 +16,11 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 
-def _decoded_iter(mcap_path, topic, factory):
-    """不依赖 mcap 库 summary 的解码迭代，兼容截断/未封口文件。"""
-    from utils import iter_mcap_messages
-    for schema, chan, msg in iter_mcap_messages(mcap_path, topics=[topic]):
-        decoder = factory.decoder_for(chan.message_encoding, schema)
-        if decoder is None:
-            continue
-        yield schema, chan, msg, decoder(msg.data)
+def _decoded_iter(mcap_path, topic, factories):
+    """官方库优先，截断/未封口文件自动回退内置数据区迭代。"""
+    from utils import iter_decoded_messages_robust
+    yield from iter_decoded_messages_robust(mcap_path, topics=[topic],
+                                            decoder_factories=factories)
 
 
 def main():
@@ -37,7 +34,7 @@ def main():
 
     from mcap_ros2.decoder import DecoderFactory
     from detector import SECONDBoardDetector
-    from utils import pointcloud2_to_xyzi, iter_mcap_messages
+    from utils import pointcloud2_to_xyzi, iter_decoded_messages_robust
     import open3d as o3d
 
     # datatype 映射 (与 config.yaml 中 point_field_datatype_to_np 一致)
@@ -60,7 +57,7 @@ def main():
 
     factory = DecoderFactory()
     for i, (schema, channel, msg, ros_msg) in enumerate(
-        _decoded_iter(args.mcap, args.lidar_topic, factory)
+        _decoded_iter(args.mcap, args.lidar_topic, [factory])
     ):
         total += 1
         # 按字段 offset 正确解析 (与标定主程序一致)

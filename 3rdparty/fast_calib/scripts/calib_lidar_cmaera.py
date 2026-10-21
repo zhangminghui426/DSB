@@ -21,7 +21,7 @@ from mcap_ros2.decoder import DecoderFactory
 from utils import (
 setup_logger, load_yaml_config, pointcloud2_to_xyzi, msg_stamp_ns,
 save_T_yaml, save_point_cloud, colorize_by_holes, circle_fit_2d, residual_3d,
-scan_mcap_channels, iter_mcap_messages
+scan_mcap_channels, iter_decoded_messages_robust
 )
 from detector import CalibrationBoardDetector, SECONDBoardDetector
 from cameras import BaseCamera, FisheyeCamera, PinholeCamera
@@ -384,13 +384,10 @@ class FastCalibLidarCamCalibrator:
 
     def _read_lidar_msgs(self, mcap_path, lidar_topic, point_field_datatype_to_np):
         out = []
-        factory = DecoderFactory()
-        for schema, chan, msg in iter_mcap_messages(mcap_path, topics=[lidar_topic]):
+        for _, chan, msg, ros_msg in iter_decoded_messages_robust(
+            mcap_path, topics=[lidar_topic], decoder_factories=[DecoderFactory()]
+        ):
             try:
-                decoder = factory.decoder_for(chan.message_encoding, schema)
-                if decoder is None:
-                    continue
-                ros_msg = decoder(msg.data)
                 if type(ros_msg).__name__ != "PointCloud2":
                     continue
                 ts = msg_stamp_ns(ros_msg, msg)
@@ -405,13 +402,10 @@ class FastCalibLidarCamCalibrator:
     def _iter_image_frames(self, mcap_path, img_topic, format_map: dict):
         video_dec = None
         n_img = 0
-        factory = DecoderFactory()
-        for schema, chan, msg in iter_mcap_messages(mcap_path, topics=[img_topic]):
+        for _, chan, msg, ros_msg in iter_decoded_messages_robust(
+            mcap_path, topics=[img_topic], decoder_factories=[DecoderFactory()]
+        ):
             try:
-                decoder = factory.decoder_for(chan.message_encoding, schema)
-                if decoder is None:
-                    continue
-                ros_msg = decoder(msg.data)
                 t_ns = msg_stamp_ns(ros_msg, msg)
                 name = type(ros_msg).__name__
                 # 兼容 foxglove_msgs/msg/CompressedVideo 等带前缀的消息类型
