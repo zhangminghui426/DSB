@@ -1,5 +1,7 @@
 import logging
 import os
+import struct
+import zlib
 from collections import Counter
 
 import yaml
@@ -9,34 +11,228 @@ from typing import Optional, Tuple
 
 from mcap.reader import make_reader
 
+# 通用 opcode（两版规范一致）
+_OP_SCHEMA = 0x03
+_OP_CHANNEL = 0x04
+_OP_MSG_INDEX = 0x07
+# mcap 文件头/尾 magic：老规范与 mcap>=1.x 两种写法都兼容
+_MCAP_MAGICS = (b"\x89MCAP\x01\x13\x37\x0a", b"\x89MCAP0\r\n")
+# 版本相关 opcode：老规范(MCAP0 0.2.x) 与新规范(0.3.x/1.x) 不同
+_OP_TABLES = {
+    b"\x89MCAP\x01\x13\x37\x0a": {"message": 0x06, "chunk": 0x05,
+                                  "stats": 0x0A, "data_end": 0x0D,
+                                  "new": False},
+    b"\x89MCAP0\r\n": {"message": 0x05, "chunk": 0x06,
+                       "stats": 0x0B, "data_end": 0x0F,
+                       "new": True},
+}
+
+
+def _read_str(buf, off):
+    n = struct.unpack_from("<I", buf, off)[0]
+    return buf[off + 4:off + 4 + n].decode("utf-8", "replace"), off + 4 + n
+
+
+def _iter_records(buf, start=0):
+    """顺序迭代 record：(opcode, data_offset, length)，非法/越界即停止。"""
+    off = start
+    n = len(buf)
+    while off + 9 <= n:
+        opcode = buf[off]
+        length = struct.unpack_from("<Q", buf, off + 1)[0]
+        if length > n - off - 9:
+            break
+        yield opcode, off + 9, length
+        off += 9 + length
+
+
+def _parse_schema(buf, off):
+    sid = struct.unpack_from("<H", buf, off)[0]
+    off += 2
+    name, off = _read_str(buf, off)
+    _, off = _read_str(buf, off)  # encoding
+    return sid, name
+
+
+def _parse_channel(buf, off):
+    cid = struct.unpack_from("<H", buf, off)[0]
+    schema_id = struct.unpack_from("<H", buf, off + 2)[0]
+    off += 4
+    topic, off = _read_str(buf, off)
+    _, off = _read_str(buf, off)  # message_encoding
+    n_meta = struct.unpack_from("<I", buf, off)[0]
+    off += 4
+    for _ in range(n_meta):
+        _, off = _read_str(buf, off)
+        _, off = _read_str(buf, off)
+    return cid, topic, schema_id
+
+
+def _parse_stats_counts(buf, off, new_spec):
+    """Statistics.channel_message_counts。
+    老规范: message_count(u64) schema_count(u16) channel_count(u32)
+            message_start(u64) message_end(u64)
+            channel_message_counts(u32 条数 + (u16,u64)*n)
+    新规范: 中间多 attachment/metadata/chunk_count 三个 u32，
+            channel_message_counts 前缀是字节长度。"""
+    o = off + 8 + 2 + 4
+    if new_spec:
+        o += 4 + 4 + 4  # attachment_count, metadata_count, chunk_count
+    o += 8 + 8  # message_start_time, message_end_time
+    n = struct.unpack_from("<I", buf, o)[0]
+    o += 4
+    n_entries = n // 10 if new_spec else n
+    counts = {}
+    for _ in range(n_entries):
+        cid = struct.unpack_from("<H", buf, o)[0]
+        cnt = struct.unpack_from("<Q", buf, o + 2)[0]
+        counts[cid] = cnt
+        o += 10
+    return counts
+
+
+def _decompress(records, compression):
+    c = (compression or "").lower()
+    if c in ("", "none"):
+        return records
+    try:
+        if c == "zstd":
+            import zstandard
+            return zstandard.ZstdDecompressor().decompress(records)
+        if c == "lz4":
+            import lz4.frame
+            return lz4.frame.decompress(records)
+        if c in ("zlib", "deflate"):
+            return zlib.decompress(records)
+    except Exception as e:
+        logging.warning(f"chunk 解压失败 ({compression}: {e})")
+    return None
+
+
+def _scan_records(buf, start, end, ops, sid2name, cid2topic, cid2sid, cnt):
+    for opcode, off, length in _iter_records(buf, start):
+        if off + length > end:
+            break
+        if opcode == _OP_SCHEMA:
+            sid, name = _parse_schema(buf, off)
+            sid2name[sid] = name
+        elif opcode == _OP_CHANNEL:
+            cid, topic, schema_id = _parse_channel(buf, off)
+            cid2topic[cid] = topic
+            cid2sid[cid] = schema_id
+        elif opcode == ops["chunk"]:
+            # 头部: start(u64) end(u64) uncompressed_size(u64)
+            #       [uncompressed_crc(u32) 仅新规范] compression(str) records(bytes u64)
+            o = off + 8 + 8 + 8
+            if ops["new"]:
+                o += 4  # uncompressed_crc
+            compression, o = _read_str(buf, o)
+            rlen = struct.unpack_from("<Q", buf, o)[0]
+            o += 8
+            dec = _decompress(buf[o:o + rlen], compression)
+            if dec is not None:
+                _scan_records(dec, 0, len(dec), ops, sid2name, cid2topic, cid2sid, cnt)
+        elif opcode == ops["message"]:
+            cid = struct.unpack_from("<H", buf, off)[0]
+            topic = cid2topic.get(cid)
+            if topic is not None:
+                cnt[topic] += 1
+        elif opcode == _OP_MSG_INDEX:
+            pass  # 与 Message 记录同批消息，避免重复计数
+        elif opcode == ops["data_end"]:
+            break
+
+
+def _manual_scan(mcap_path):
+    """不依赖 mcap 库版本的内置解析：summary 区收 Channel/Schema，
+    Statistics 或数据区 Message/MessageIndex 补计数。"""
+    with open(mcap_path, "rb") as f:
+        data = f.read()
+    magic = next((m for m in _MCAP_MAGICS
+                  if data.startswith(m) and data.endswith(m)), None)
+    if magic is None:
+        return []
+    ops = _OP_TABLES[magic]
+
+    sid2name, cid2topic, cid2sid = {}, {}, {}
+    counts = {}
+
+    # 1) summary 区（不压缩）：Schema/Channel/Statistics
+    try:
+        summary_start = None
+        # footer record 布局: [opcode(1B)][length(8B)][data][magic(8B)]
+        # data 老规范 24B（message/chunk count），新规范 20B（summary_crc）
+        for flen in (24, 20):
+            op_pos = len(data) - 8 - flen - 9
+            if op_pos >= 0 and data[op_pos] == 0x02:
+                l = struct.unpack_from("<Q", data, op_pos + 1)[0]
+                if l == flen:
+                    summary_start = struct.unpack_from("<Q", data, op_pos + 9)[0]
+                    break
+        if summary_start is not None and summary_start < len(data):
+            for opcode, off, length in _iter_records(data, summary_start):
+                if opcode == _OP_SCHEMA:
+                    sid, name = _parse_schema(data, off)
+                    sid2name[sid] = name
+                elif opcode == _OP_CHANNEL:
+                    cid, topic, schema_id = _parse_channel(data, off)
+                    cid2topic[cid] = topic
+                    cid2sid[cid] = schema_id
+                elif opcode == ops["stats"]:
+                    counts = _parse_stats_counts(data, off, ops["new"])
+                elif opcode == 0x02:  # Footer
+                    break
+    except Exception as e:
+        logging.warning(f"内置 summary 解析失败 ({e})")
+
+    # 2) 数据区：Message/MessageIndex 计数（直写或 chunk 内层均可）
+    cnt = Counter()
+    try:
+        sid2name_d, cid2topic_d, cid2sid_d = {}, {}, {}
+        _scan_records(data, len(magic), len(data), ops,
+                      sid2name_d, cid2topic_d, cid2sid_d, cnt)
+        # 数据区内层出现的 Channel/Schema 优先（chunk 场景）
+        if cid2topic_d:
+            sid2name.update(sid2name_d)
+            cid2topic.update(cid2topic_d)
+            cid2sid.update(cid2sid_d)
+    except Exception as e:
+        logging.warning(f"内置 data section 解析失败 ({e})")
+
+    if not cid2topic:
+        return []
+
+    # 计数：summary Statistics（key=channel_id）优先，否则数据区计数（key=topic）
+    cnt_by_topic = dict(cnt)
+    result = []
+    for cid, t in cid2topic.items():
+        c = counts.get(cid, 0) if counts else cnt_by_topic.get(t, 0)
+        result.append((t, sid2name.get(cid2sid.get(cid, -1), "?"), c))
+    return result
+
 
 def scan_mcap_channels(mcap_path) -> list:
     """扫描 mcap 全部 channel：(topic, schema_name, count)。不依赖解码器。
-    优先用 summary（秒级）；summary 缺失/损坏时回退全量遍历；
-    遍历中断时保留已收集到的话题。"""
-    cnt = Counter()
-    names = {}
-    with open(mcap_path, "rb") as f:
-        reader = make_reader(f)
-        summary = None
-        try:
+    优先用 mcap 库 summary（秒级）；失败/为空时用内置解析器
+    （summary 区 + data section 兜底），不再受 mcap 库版本影响。"""
+    # 1) 快速路径：mcap 库 summary
+    try:
+        with open(mcap_path, "rb") as f:
+            reader = make_reader(f)
             summary = reader.get_summary()
-        except Exception as e:
-            logging.warning(f"mcap summary 解析失败 ({e}), 回退全量遍历")
         if summary is not None and summary.channels:
+            cnt = Counter()
+            names = {}
             for cid, ch in summary.channels.items():
                 t = ch.topic
                 cnt[t] = summary.statistics.channel_message_counts.get(cid, 0)
                 names[t] = (summary.schemas[ch.schema_id].name
                             if ch.schema_id in summary.schemas else "?")
-        else:
-            try:
-                for schema, channel, _ in reader.iter_messages():
-                    cnt[channel.topic] += 1
-                    names[channel.topic] = schema.name
-            except Exception as e:
-                logging.warning(f"mcap 全量遍历中断 ({e}), 返回已扫描到的话题")
-    return [(t, names[t], cnt[t]) for t in cnt]
+            return [(t, names[t], cnt[t]) for t in cnt]
+    except Exception as e:
+        logging.warning(f"mcap 库 summary 解析失败 ({e}), 使用内置解析器")
+    # 2) 内置解析
+    return _manual_scan(mcap_path)
 
 
 def setup_logger(log_path: str):
