@@ -7,7 +7,9 @@
 #include "config.hpp"
 #include "preprocess/preprocess.hpp"
 #include "inference/trt_engine.hpp"
-#include "ops/cuda_kernels.hpp"
+#include "ops/camera-backbone.hpp"
+#include "ops/camera-bevpool.hpp"
+#include "ops/lidar-sparse.hpp"
 
 #include <cuda_runtime_api.h>
 

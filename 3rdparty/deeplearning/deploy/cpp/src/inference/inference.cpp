@@ -1,7 +1,8 @@
 // 模型推理层实现：TRT engine 编排 + CUDA/CPU 自定义算子。
 // 镜像 Python 侧 deploy/inference.py（Inferencer）+ 部分 C++ ops。
-// camera 链算子（geometry / fold+bev_pool / downsample）走 CUDA kernel
-// （src/ops/cuda_kernels.cu），与 TRT 引擎共用 stream；lidar 链暂为 CPU。
+// camera 链算子（camera-bevpool / camera-backbone）与 lidar 稀疏链
+// （lidar-sparse）走 CUDA kernel（src/ops/*.cu），与 TRT 引擎共用 stream；
+// 体素化与均值化（量小）留在 CPU。
 
 #include "inference/inference.hpp"
 

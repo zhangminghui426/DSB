@@ -181,7 +181,7 @@ Tensor bev_pool(const Config &cfg, const Tensor &geom, const Tensor &x) {
 // ================================================================ downsample
 // 3x (conv3x3 + bn + relu)；中间 conv stride 2；blob 布局按 DownLayer。
 // 输入 (B, C, H, W)（B=1）或 (C, H, W)，输出 (1, C_out, H_out, W_out)。
-// CPU 参考实现（裸指针 + 顺序访问；GPU 版见 cuda_kernels.cu）。
+// CPU 参考实现（裸指针 + 顺序访问；GPU 版见 ops/camera-backbone.cu）。
 Tensor downsample_conv(const Config &cfg, const Tensor &bev,
                        const std::vector<float> &blob) {
   Tensor cur = bev;

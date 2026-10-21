@@ -69,7 +69,11 @@ add_executable(dsb_infer
   src/postprocess/postprocess.cpp
 )
 if(DSB_HAVE_CUDA)
-  target_sources(dsb_infer PRIVATE src/ops/cuda_kernels.cu)
+  target_sources(dsb_infer PRIVATE
+    src/ops/camera-bevpool.cu
+    src/ops/camera-backbone.cu
+    src/ops/lidar-sparse.cu
+  )
 endif()
 target_include_directories(dsb_infer PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
