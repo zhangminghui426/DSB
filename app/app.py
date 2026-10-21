@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +22,22 @@ FAST_CALIB_DIR = PROJECT_ROOT / "3rdparty" / "fast_calib"
 SCRIPTS_DIR = FAST_CALIB_DIR / "scripts"
 TMP_DIR = PROJECT_ROOT / "tmp"
 TMP_DIR.mkdir(parents=True, exist_ok=True)
+VIS_OVERLAY_DIR = PROJECT_ROOT / "outputs" / "vis_overlays"
+
+def _cleanup_cache():
+    """程序退出时清理临时上传文件与可视化缓存（保留标定结果）"""
+    for p in (TMP_DIR, VIS_OVERLAY_DIR):
+        try:
+            if p.exists():
+                shutil.rmtree(p)
+        except OSError:
+            pass
+    try:
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+atexit.register(_cleanup_cache)
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 from utils import scan_mcap_channels  # noqa: E402
@@ -434,19 +452,18 @@ with tab2:
 
     # 跨 rerun 保留的上次可视化结果（切 tab 后仍显示）
     if st.session_state["vis_done"] is True:
-        vis_dir = PROJECT_ROOT / "outputs" / "vis_overlays"
-        if vis_dir.exists():
-            imgs = sorted(vis_dir.glob("*.jpg"))
+        if VIS_OVERLAY_DIR.exists():
+            imgs = sorted(VIS_OVERLAY_DIR.glob("*.jpg"))
             if imgs:
                 names = [p.name for p in imgs]
                 sel_name = st.selectbox("投影图（帧）", options=names,
                                         index=len(names) - 1, key="vis_img_sel")
-                st.image(str(vis_dir / sel_name), caption=sel_name,
+                st.image(str(VIS_OVERLAY_DIR / sel_name), caption=sel_name,
                          use_container_width=True)
             else:
                 st.warning("vis_overlays 目录为空，未生成投影图，请检查 mcap/话题/外参")
         else:
-            st.warning(f"未找到投影图目录: {vis_dir}")
+            st.warning(f"未找到投影图目录: {VIS_OVERLAY_DIR}")
     elif st.session_state["vis_done"] is False:
         st.error("可视化失败，请查看上方日志")
 
@@ -476,7 +493,8 @@ with tab2:
             proc.wait()
             if proc.returncode == 0:
                 st.session_state["vis_done"] = True
-                st.success(f"可视化完成! (返回码 {proc.returncode})")
+                # 立即重跑脚本：本次 rerun 才会走到上方图片显示分支
+                st.rerun()
             else:
                 st.session_state["vis_done"] = False
                 st.error(f"可视化失败, 返回码 {proc.returncode}")
