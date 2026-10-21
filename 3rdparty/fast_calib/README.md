@@ -17,8 +17,22 @@ fast_calib/
 └── tools/
     ├── vis_lidar.py           # 点云可视化（mcap / pcd）
     ├── batch_detect.py        # 批量检测
-    └── open3d_pcd.py          # Open3D 查看 pcd 文件
+    ├── open3d_pcd.py          # Open3D 查看 pcd 文件
+    └── list_mcap_topics.py    # 列出 mcap 全部话题（排查话题名用）
 ```
+
+## 话题排查
+
+标定帧数为 0 时先确认 `config.yaml` 的 `data_config.lidar_topic` / `cam_topics`
+与 mcap 实际话题一致：
+
+```bash
+python tools/list_mcap_topics.py data/xxx.mcap
+```
+
+输出形如 `/sensing/lidar/rs_h32f70_2/points  (sensor_msgs/msg/PointCloud2, 1234 msgs)`。
+程序本身也会自动纠偏：配置话题读不到时自动打印 mcap 全部 channel，并按 schema /
+关键字（points/pointcloud/image/video）自动采用唯一候选。
 
 SECOND 检测器本体在 `3rdparty/deeplearning/models/calib_board_detector/`
 （`scripts/detector.py` 自动挂载该目录）。权重路径由 `second_detector.model_path`

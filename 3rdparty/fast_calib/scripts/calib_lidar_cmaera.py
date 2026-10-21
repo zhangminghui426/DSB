@@ -360,6 +360,45 @@ class FastCalibLidarCamCalibrator:
             cv2.circle(draw, (int(q[0]), int(q[1])), 1, (int(col[0]), int(col[1]), int(col[2])), -1)
         cv2.imwrite(out_path, draw)
 
+    def _scan_mcap_channels(self, mcap_path):
+        """扫描 mcap 全部 channel：(topic, schema_name, count)。不依赖解码器。
+        优先用 summary（秒级）；无 summary 才全量遍历消息计数。"""
+        from collections import Counter
+        cnt = Counter()
+        names = {}
+        with open(mcap_path, "rb") as f:
+            reader = make_reader(f)
+            summary = reader.get_summary()
+            if summary is not None and summary.channels:
+                for cid, ch in summary.channels.items():
+                    t = ch.topic
+                    cnt[t] = summary.statistics.channel_message_counts.get(cid, 0)
+                    names[t] = (summary.schemas[ch.schema_id].name
+                                if ch.schema_id in summary.schemas else "?")
+            else:
+                for schema, channel, _ in reader.iter_messages():
+                    cnt[channel.topic] += 1
+                    names[channel.topic] = schema.name
+        return [(t, names[t], cnt[t]) for t in cnt]
+
+    def _resolve_topic(self, mcap_path, cfg_topic, keywords, schema_kw):
+        """精确匹配优先；为空时按关键字/schema 扫描候选并自动纠偏。
+        返回 (实际 topic, 是否已自动纠偏)。"""
+        chans = self._scan_mcap_channels(mcap_path)
+        if any(t == cfg_topic for t, _, _ in chans):
+            return cfg_topic, False
+        cands = [t for t, s, _ in chans
+                 if (schema_kw and schema_kw in s) or any(k in t for k in keywords)]
+        logging.warning(f"topic '{cfg_topic}' 未匹配到 mcap 实际话题, 可用 channel:")
+        for t, s, n in chans:
+            logging.warning(f"  {t}  ({s}, {n} msgs)")
+        if len(cands) == 1:
+            logging.warning(f"自动采用唯一候选 '{cands[0]}'")
+            return cands[0], True
+        if len(cands) > 1:
+            logging.warning(f"候选(按 {keywords}/{schema_kw}): {cands}, 请在 config.yaml 指定正确话题")
+        return cfg_topic, False
+
     def _read_lidar_msgs(self, mcap_path, lidar_topic, point_field_datatype_to_np):
         out = []
         with open(mcap_path, "rb") as f:
@@ -419,6 +458,11 @@ class FastCalibLidarCamCalibrator:
         logging.info(f"img frames count = {n_img}{extra_err}")
 
     def read_mcap_sync(self, mcap_path, img_topic, lidar_topic, point_field_datatype_to_np, format_map, max_frames=50, seed=0):
+        # 话题解析：精确匹配优先，读不到时按 schema/关键字自动纠偏
+        lidar_topic, _ = self._resolve_topic(
+            mcap_path, lidar_topic, ["points", "pointcloud", "cloud"], "PointCloud2")
+        img_topic, _ = self._resolve_topic(
+            mcap_path, img_topic, ["image", "video"], None)
         lidar_msgs = self._read_lidar_msgs(mcap_path, lidar_topic, point_field_datatype_to_np)
         if not lidar_msgs:
             logging.warning("no lidar data, cannot sync")
