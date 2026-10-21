@@ -469,14 +469,15 @@ with tab4:
             # 与侧边栏 1.5 自动解析的话题保持一致
             lidar_topic = st.session_state.get("lidar_topic", "/lidar/rs_h32f70_2/points")
 
-            # 先统计总帧数
-            from mcap.reader import make_reader
+            # 先统计总帧数（官方库优先，截断/未封口文件自动回退内置迭代）
+            sys.path.insert(0, str(SCRIPTS_DIR))
             from mcap_ros2.decoder import DecoderFactory
+            from utils import iter_decoded_messages_robust
             total_frames = 0
-            with open(mcap_file, "rb") as f:
-                reader = make_reader(f, decoder_factories=[DecoderFactory()])
-                for _ in reader.iter_decoded_messages(topics=[lidar_topic]):
-                    total_frames += 1
+            for _ in iter_decoded_messages_robust(
+                mcap_file, topics=[lidar_topic], decoder_factories=[DecoderFactory()]
+            ):
+                total_frames += 1
             st.info(f"mcap 共 {total_frames} 帧点云")
 
             # 单帧可视化
@@ -498,14 +499,15 @@ with tab4:
 
                 # 读指定帧的点云 (按字段 offset 正确解析)
                 pts = None
-                with open(mcap_file, "rb") as f:
-                    reader = make_reader(f, decoder_factories=[DecoderFactory()])
-                    for i, (schema, channel, msg, ros_msg) in enumerate(
-                        reader.iter_decoded_messages(topics=[lidar_topic])
-                    ):
-                        if i == frame_idx:
-                            pts = pointcloud2_to_xyzi(ros_msg, dtype_map)
-                            break
+                for i, (schema, channel, msg, ros_msg) in enumerate(
+                    iter_decoded_messages_robust(
+                        mcap_file, topics=[lidar_topic],
+                        decoder_factories=[DecoderFactory()]
+                    )
+                ):
+                    if i == frame_idx:
+                        pts = pointcloud2_to_xyzi(ros_msg, dtype_map)
+                        break
 
                 if pts is None:
                     st.error(f"帧 {frame_idx} 超出范围")
