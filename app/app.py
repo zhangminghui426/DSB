@@ -292,7 +292,21 @@ with tab2:
             log_box.code(log_text, language="bash", height=400)
         proc.wait()
         if proc.returncode == 0:
-            st.success("可视化完成!")
+            st.success(f"可视化完成! (返回码 {proc.returncode})")
+            # 显示生成的投影图
+            vis_dir = PROJECT_ROOT / "outputs" / "vis_overlays"
+            if vis_dir.exists():
+                imgs = sorted(vis_dir.glob("*.jpg"))
+                if imgs:
+                    names = [p.name for p in imgs]
+                    sel_name = st.selectbox("投影图（帧）", options=names,
+                                            index=len(names) - 1)
+                    st.image(str(vis_dir / sel_name), caption=sel_name,
+                             use_container_width=True)
+                else:
+                    st.warning("vis_overlays 目录为空，未生成投影图，请检查 mcap/话题/外参")
+            else:
+                st.warning(f"未找到投影图目录: {vis_dir}")
         else:
             st.error(f"可视化失败, 返回码 {proc.returncode}")
 
