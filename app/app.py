@@ -50,15 +50,18 @@ with st.sidebar:
             f.write(uploaded_mcap.getbuffer())
         st.session_state["mcap_file"] = str(mcap_path)
         log_to_terminal(f"[上传] mcap 已保存: {mcap_path}")
-        # 自动解析话题（不依赖解码器，summary 秒级）
+        # 自动解析话题（不依赖解码器，summary 秒级；异常时回退全量遍历）
         try:
             topics = scan_mcap_channels(str(mcap_path))
             st.session_state["mcap_topics"] = topics
             log_to_terminal(f"[话题] 解析到 {len(topics)} 个 channel:")
             for t, s, n in topics:
                 log_to_terminal(f"  {t}  ({s}, {n} msgs)")
+            if not topics:
+                st.warning("mcap 可打开但未解析到话题，可在下方手动输入话题名")
         except Exception as e:
-            st.error(f"解析 mcap 话题失败: {e}")
+            st.session_state["mcap_topics"] = []
+            st.error(f"解析 mcap 话题失败: {e}，可手动输入话题名")
             log_to_terminal(f"[话题] 解析失败: {e}")
 
     # 1.5 话题（上传 mcap 后自动解析，可手动改选）
@@ -78,7 +81,14 @@ with st.sidebar:
             for t, s, n in mcap_topics:
                 st.write(f"`{t}`  ({s}, {n} msgs)")
     else:
-        st.caption("上传 mcap 后自动解析雷达/相机话题")
+        st.caption("未解析到话题（mcap summary 异常时），可直接手动输入：")
+        lidar_manual = st.text_input("雷达话题（手动）", key="lidar_topic_manual")
+        cam_manual = st.text_input("相机话题（手动，逗号分隔）", key="cam_topic_manual")
+        if lidar_manual:
+            st.session_state["lidar_topic"] = lidar_manual
+        if cam_manual:
+            st.session_state["cam_topics_sel"] = [
+                t.strip() for t in cam_manual.split(",") if t.strip()]
 
     # 2. 相机内参
     st.subheader("2. 相机内参")
