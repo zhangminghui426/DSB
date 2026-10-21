@@ -31,8 +31,9 @@ python tools/list_mcap_topics.py data/xxx.mcap
 ```
 
 输出形如 `/sensing/lidar/rs_h32f70_2/points  (sensor_msgs/msg/PointCloud2, 1234 msgs)`。
-程序本身也会自动纠偏：配置话题读不到时自动打印 mcap 全部 channel，并按 schema /
-关键字（points/pointcloud/image/video）自动采用唯一候选。
+Streamlit UI（`app/app.py`）上传 mcap 后也会自动解析雷达/相机话题并供下拉选择，
+无需手改配置；命令行运行的程序同样会自动纠偏：配置话题读不到时自动打印 mcap
+全部 channel，并按 schema / 关键字（points/pointcloud/image/video）自动采用唯一候选。
 
 SECOND 检测器本体在 `3rdparty/deeplearning/models/calib_board_detector/`
 （`scripts/detector.py` 自动挂载该目录）。权重路径由 `second_detector.model_path`

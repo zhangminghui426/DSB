@@ -1,9 +1,34 @@
 import logging
 import os
+from collections import Counter
+
 import yaml
 import numpy as np
 import open3d as o3d
 from typing import Optional, Tuple
+
+from mcap.reader import make_reader
+
+
+def scan_mcap_channels(mcap_path) -> list:
+    """扫描 mcap 全部 channel：(topic, schema_name, count)。不依赖解码器。
+    优先用 summary（秒级）；无 summary 才全量遍历消息计数。"""
+    cnt = Counter()
+    names = {}
+    with open(mcap_path, "rb") as f:
+        reader = make_reader(f)
+        summary = reader.get_summary()
+        if summary is not None and summary.channels:
+            for cid, ch in summary.channels.items():
+                t = ch.topic
+                cnt[t] = summary.statistics.channel_message_counts.get(cid, 0)
+                names[t] = (summary.schemas[ch.schema_id].name
+                            if ch.schema_id in summary.schemas else "?")
+        else:
+            for schema, channel, _ in reader.iter_messages():
+                cnt[channel.topic] += 1
+                names[channel.topic] = schema.name
+    return [(t, names[t], cnt[t]) for t in cnt]
 
 
 def setup_logger(log_path: str):

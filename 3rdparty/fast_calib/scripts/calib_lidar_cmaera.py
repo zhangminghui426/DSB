@@ -21,7 +21,8 @@ from mcap.reader import make_reader
 from mcap_ros2.decoder import DecoderFactory
 from utils import (
 setup_logger, load_yaml_config, pointcloud2_to_xyzi, msg_stamp_ns,
-save_T_yaml, save_point_cloud, colorize_by_holes, circle_fit_2d, residual_3d
+save_T_yaml, save_point_cloud, colorize_by_holes, circle_fit_2d, residual_3d,
+scan_mcap_channels
 )
 from detector import CalibrationBoardDetector, SECONDBoardDetector
 from cameras import BaseCamera, FisheyeCamera, PinholeCamera
@@ -361,25 +362,8 @@ class FastCalibLidarCamCalibrator:
         cv2.imwrite(out_path, draw)
 
     def _scan_mcap_channels(self, mcap_path):
-        """扫描 mcap 全部 channel：(topic, schema_name, count)。不依赖解码器。
-        优先用 summary（秒级）；无 summary 才全量遍历消息计数。"""
-        from collections import Counter
-        cnt = Counter()
-        names = {}
-        with open(mcap_path, "rb") as f:
-            reader = make_reader(f)
-            summary = reader.get_summary()
-            if summary is not None and summary.channels:
-                for cid, ch in summary.channels.items():
-                    t = ch.topic
-                    cnt[t] = summary.statistics.channel_message_counts.get(cid, 0)
-                    names[t] = (summary.schemas[ch.schema_id].name
-                                if ch.schema_id in summary.schemas else "?")
-            else:
-                for schema, channel, _ in reader.iter_messages():
-                    cnt[channel.topic] += 1
-                    names[channel.topic] = schema.name
-        return [(t, names[t], cnt[t]) for t in cnt]
+        """扫描 mcap 全部 channel：(topic, schema_name, count)。见 utils.scan_mcap_channels。"""
+        return scan_mcap_channels(mcap_path)
 
     def _resolve_topic(self, mcap_path, cfg_topic, keywords, schema_kw):
         """精确匹配优先；为空时按关键字/schema 扫描候选并自动纠偏。

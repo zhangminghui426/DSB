@@ -21,6 +21,9 @@ SCRIPTS_DIR = FAST_CALIB_DIR / "scripts"
 TMP_DIR = PROJECT_ROOT / "tmp"
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
+sys.path.insert(0, str(SCRIPTS_DIR))
+from utils import scan_mcap_channels  # noqa: E402
+
 st.set_page_config(page_title="Fast-Calib 标定", layout="wide")
 st.title("Fast-Calib 雷达-相机外参标定")
 
@@ -47,6 +50,35 @@ with st.sidebar:
             f.write(uploaded_mcap.getbuffer())
         st.session_state["mcap_file"] = str(mcap_path)
         log_to_terminal(f"[上传] mcap 已保存: {mcap_path}")
+        # 自动解析话题（不依赖解码器，summary 秒级）
+        try:
+            topics = scan_mcap_channels(str(mcap_path))
+            st.session_state["mcap_topics"] = topics
+            log_to_terminal(f"[话题] 解析到 {len(topics)} 个 channel:")
+            for t, s, n in topics:
+                log_to_terminal(f"  {t}  ({s}, {n} msgs)")
+        except Exception as e:
+            st.error(f"解析 mcap 话题失败: {e}")
+            log_to_terminal(f"[话题] 解析失败: {e}")
+
+    # 1.5 话题（上传 mcap 后自动解析，可手动改选）
+    st.subheader("1.5 话题（自动解析）")
+    mcap_topics = st.session_state.get("mcap_topics", [])
+    if mcap_topics:
+        lidar_cands = [t for t, s, _ in mcap_topics
+                       if "PointCloud2" in s or any(k in t for k in ("points", "pointcloud", "cloud"))]
+        cam_cands = [t for t, s, _ in mcap_topics
+                     if "Image" in s or "Video" in s or any(k in t for k in ("image", "video"))]
+        all_topics = [t for t, _, _ in mcap_topics]
+        st.selectbox("雷达话题", options=lidar_cands or all_topics, index=0,
+                     key="lidar_topic")
+        st.multiselect("相机话题（可多选）", options=cam_cands or all_topics,
+                       default=cam_cands or [], key="cam_topics_sel")
+        with st.expander("mcap 全部话题"):
+            for t, s, n in mcap_topics:
+                st.write(f"`{t}`  ({s}, {n} msgs)")
+    else:
+        st.caption("上传 mcap 后自动解析雷达/相机话题")
 
     # 2. 相机内参
     st.subheader("2. 相机内参")
@@ -110,9 +142,15 @@ with tab1:
         st.markdown(f"**数据**: `{mcap_file}`  |  **检测器**: {detector_type}")
 
     if st.button("开始标定", type="primary", disabled=not mcap_file):
-        second_model = str("/tmp/best_model.pth")
-        roi = f"[[{x_min}, {x_max}], [{y_min}, {y_max}], [{z_min}, {z_max}]]"
-        cfg_text = f"""calib_board:
+        lidar_topic = st.session_state.get("lidar_topic", "")
+        cam_sel = st.session_state.get("cam_topics_sel", [])
+        if not lidar_topic or not cam_sel:
+            st.error("请先在侧边栏 1.5 选择雷达/相机话题（上传 mcap 后自动解析）")
+        else:
+            second_model = str("/tmp/best_model.pth")
+            roi = f"[[{x_min}, {x_max}], [{y_min}, {y_max}], [{z_min}, {z_max}]]"
+            cam_yaml = "\n".join(f'    cam_{i + 1}: "{t}"' for i, t in enumerate(cam_sel))
+            cfg_text = f"""calib_board:
   hole_centers_board:
     [
       [-0.25,  0.20, 0.0],
@@ -181,8 +219,8 @@ second_detector:
 data_config:
   mcap_file: "{mcap_file}"
   cam_topics:
-    cam_gmsl_2: "/camera/gmsl_2/image/encoded"
-  lidar_topic: "/lidar/rs_h32f70_2/points"
+{cam_yaml}
+  lidar_topic: "{lidar_topic}"
 
 output_dir: "{PROJECT_ROOT / 'outputs'}"
 """
@@ -234,7 +272,9 @@ with tab2:
     st.header("可视化质检")
     vis_frame = st.number_input("帧号", 0, 1000, 0, 1)
     result_dir = PROJECT_ROOT / "outputs" / "result"
-    default_T = str(result_dir / "cam_gmsl_2_lidar2cam_fastcalib.npy")
+    npy_files = list(result_dir.glob("*.npy")) if result_dir.exists() else []
+    default_T = str(npy_files[0]) if npy_files \
+        else str(result_dir / "cam_1_lidar2cam_fastcalib.npy")
     vis_T = st.text_input("外参文件路径", value=default_T)
     if st.button("运行投影可视化"):
         log_box = st.empty()
@@ -351,8 +391,8 @@ with tab4:
         if not mcap_file:
             st.warning("请先在左侧上传 .mcap 数据文件")
         else:
-            lidar_topic = "/lidar/rs_h32f70_2/points"
-            cam_topic = "/camera/gmsl_2/image/encoded"
+            # 与侧边栏 1.5 自动解析的话题保持一致
+            lidar_topic = st.session_state.get("lidar_topic", "/lidar/rs_h32f70_2/points")
 
             # 先统计总帧数
             from mcap.reader import make_reader
