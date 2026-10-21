@@ -26,20 +26,25 @@ def load_mcap(mcap_path, lidar_topic, max_frames=None):
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-    from mcap.reader import make_reader
     from mcap_ros2.decoder import DecoderFactory
-    from utils import pointcloud2_to_xyzi
+    from utils import pointcloud2_to_xyzi, iter_mcap_messages
 
     pftn = {1:"i1",2:"u2",3:"i2",4:"u2",5:"i4",6:"u4",7:"f4",8:"f8"}
     out = []
-    with open(mcap_path, "rb") as f:
-        reader = make_reader(f, decoder_factories=[DecoderFactory()])
-        for _, chan, msg, ros_msg in reader.iter_decoded_messages(topics=[lidar_topic]):
+    factory = DecoderFactory()
+    for schema, chan, msg in iter_mcap_messages(mcap_path, topics=[lidar_topic]):
+        try:
+            decoder = factory.decoder_for(chan.message_encoding, schema)
+            if decoder is None:
+                continue
+            ros_msg = decoder(msg.data)
             if type(ros_msg).__name__ != "PointCloud2":
                 continue
             out.append((msg.log_time, pointcloud2_to_xyzi(ros_msg, pftn)))
             if max_frames is not None and len(out) >= max_frames:
                 break
+        except Exception as e:
+            print(f"parse err: {e}")
     return out
 
 

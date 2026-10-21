@@ -225,6 +225,106 @@ def _manual_scan(mcap_path):
     return result
 
 
+def _parse_schema_full(buf, rec_off, length):
+    """完整解析 Schema record（含 data 段，data 到记录末尾）。
+    返回鸭子类型对象（id/name/encoding/data），不依赖 mcap.records 构造，
+    兼容不同版本 mcap 库，可直接交给解码器。"""
+    class _Schema:
+        __slots__ = ("id", "name", "encoding", "data")
+    sid = struct.unpack_from("<H", buf, rec_off)[0]
+    off = rec_off + 2
+    name, off = _read_str(buf, off)
+    encoding, off = _read_str(buf, off)
+    s = _Schema()
+    s.id, s.name, s.encoding, s.data = sid, name, encoding, buf[off:rec_off + length]
+    return s
+
+
+def _parse_channel_full(buf, off, new_spec):
+    class _Channel:
+        __slots__ = ("id", "topic", "message_encoding", "metadata", "schema_id")
+    cid = struct.unpack_from("<H", buf, off)[0]
+    schema_id = struct.unpack_from("<H", buf, off + 2)[0]
+    off += 4
+    topic, off = _read_str(buf, off)
+    msg_enc, off = _read_str(buf, off)
+    n = struct.unpack_from("<I", buf, off)[0]
+    off += 4
+    metadata = {}
+    if new_spec:
+        # metadata 为字节长度前缀 + (prefixed_string, prefixed_string)*
+        end = off + n
+        while off < end:
+            k, off = _read_str(buf, off)
+            v, off = _read_str(buf, off)
+            metadata[k] = v
+    else:
+        # 老规范 metadata 为条目数
+        for _ in range(n):
+            k, off = _read_str(buf, off)
+            v, off = _read_str(buf, off)
+            metadata[k] = v
+    ch = _Channel()
+    ch.id, ch.topic, ch.message_encoding = cid, topic, msg_enc
+    ch.metadata, ch.schema_id = metadata, schema_id
+    return ch
+
+
+def iter_mcap_messages(mcap_path, topics=None):
+    """不依赖 mcap 库 summary 的消息迭代：产出 (schema, channel, message)。
+
+    适用于尾部未封口/截断等 summary 不可用的 rosbag2 mcap（此时
+    iter_decoded_messages 会在 get_summary 崩溃）。产出对象用
+    mcap.records 构造，可直接交给 mcap.decoder.Decoder 解码。
+    topics 为 None 时产出全部话题。"""
+    class _Message:
+        __slots__ = ("channel_id", "log_time", "publish_time", "data")
+    with open(mcap_path, "rb") as f:
+        data = f.read()
+    magic = next((m for m in _MCAP_MAGICS if data.startswith(m)), None)
+    if magic is None:
+        return
+    ops = _OP_TABLES[magic]
+    sid2sch, cid2chan = {}, {}
+
+    def handle(buf, start, end):
+        for opcode, off, length in _iter_records(buf, start):
+            if off + length > end:
+                break
+            try:
+                if opcode == _OP_SCHEMA:
+                    sch = _parse_schema_full(buf, off, length)
+                    sid2sch[sch.id] = sch
+                elif opcode == _OP_CHANNEL:
+                    chan = _parse_channel_full(buf, off, ops["new"])
+                    cid2chan[chan.id] = chan
+                elif opcode == ops["message"]:
+                    chan = cid2chan.get(struct.unpack_from("<H", buf, off)[0])
+                    if chan is not None and (topics is None or chan.topic in topics):
+                        lt = struct.unpack_from("<Q", buf, off + 2)[0]
+                        pt = struct.unpack_from("<Q", buf, off + 10)[0]
+                        m = _Message()
+                        m.channel_id, m.log_time, m.publish_time = chan.id, lt, pt
+                        m.data = buf[off + 18:off + length]
+                        yield (sid2sch.get(chan.schema_id), chan, m)
+                elif opcode == ops["chunk"]:
+                    o = off + 24
+                    if ops["new"]:
+                        o += 4  # uncompressed_crc
+                    compression, o = _read_str(buf, o)
+                    rlen = struct.unpack_from("<Q", buf, o)[0]
+                    o += 8
+                    dec = _decompress(buf[o:o + rlen], compression)
+                    if dec is not None:
+                        yield from handle(dec, 0, len(dec))
+                elif opcode == ops["data_end"]:
+                    break
+            except Exception:
+                continue  # 坏记录跳过，不拖垮整体
+
+    yield from handle(data, len(magic), len(data))
+
+
 def scan_mcap_channels(mcap_path) -> list:
     """扫描 mcap 全部 channel：(topic, schema_name, count)。不依赖解码器。
     优先用 mcap 库 summary（秒级）；失败/为空时用内置解析器

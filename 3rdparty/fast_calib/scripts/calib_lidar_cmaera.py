@@ -17,12 +17,11 @@ import open3d as o3d
 from scipy.optimize import least_squares
 from scipy.spatial.distance import pdist
 from scipy.spatial.transform import Rotation
-from mcap.reader import make_reader
 from mcap_ros2.decoder import DecoderFactory
 from utils import (
 setup_logger, load_yaml_config, pointcloud2_to_xyzi, msg_stamp_ns,
 save_T_yaml, save_point_cloud, colorize_by_holes, circle_fit_2d, residual_3d,
-scan_mcap_channels
+scan_mcap_channels, iter_mcap_messages
 )
 from detector import CalibrationBoardDetector, SECONDBoardDetector
 from cameras import BaseCamera, FisheyeCamera, PinholeCamera
@@ -385,17 +384,20 @@ class FastCalibLidarCamCalibrator:
 
     def _read_lidar_msgs(self, mcap_path, lidar_topic, point_field_datatype_to_np):
         out = []
-        with open(mcap_path, "rb") as f:
-            reader = make_reader(f, decoder_factories=[DecoderFactory()])
-            for _, chan, msg, ros_msg in reader.iter_decoded_messages(topics=[lidar_topic]):
+        factory = DecoderFactory()
+        for schema, chan, msg in iter_mcap_messages(mcap_path, topics=[lidar_topic]):
+            try:
+                decoder = factory.decoder_for(chan.message_encoding, schema)
+                if decoder is None:
+                    continue
+                ros_msg = decoder(msg.data)
                 if type(ros_msg).__name__ != "PointCloud2":
                     continue
-                try:
-                    ts = msg_stamp_ns(ros_msg, msg)
-                    pc = pointcloud2_to_xyzi(ros_msg, point_field_datatype_to_np)
-                    out.append((ts, pc))
-                except Exception as e:
-                    logging.error(f"lidar parse err:{e}")
+                ts = msg_stamp_ns(ros_msg, msg)
+                pc = pointcloud2_to_xyzi(ros_msg, point_field_datatype_to_np)
+                out.append((ts, pc))
+            except Exception as e:
+                logging.error(f"lidar parse err:{e}")
         out.sort(key=lambda x: x[0])
         logging.info(f"lidar_msgs count = {len(out)}")
         return out
@@ -403,41 +405,44 @@ class FastCalibLidarCamCalibrator:
     def _iter_image_frames(self, mcap_path, img_topic, format_map: dict):
         video_dec = None
         n_img = 0
-        with open(mcap_path, "rb") as f:
-            reader = make_reader(f, decoder_factories=[DecoderFactory()])
-            for _, chan, msg, ros_msg in reader.iter_decoded_messages(topics=[img_topic]):
+        factory = DecoderFactory()
+        for schema, chan, msg in iter_mcap_messages(mcap_path, topics=[img_topic]):
+            try:
+                decoder = factory.decoder_for(chan.message_encoding, schema)
+                if decoder is None:
+                    continue
+                ros_msg = decoder(msg.data)
                 t_ns = msg_stamp_ns(ros_msg, msg)
                 name = type(ros_msg).__name__
                 # 兼容 foxglove_msgs/msg/CompressedVideo 等带前缀的消息类型
                 is_compressed_video = "CompressedVideo" in name
                 is_compressed_image = "CompressedImage" in name
                 is_image = name == "Image"
-                try:
-                    if is_compressed_video:
-                        if video_dec is None:
-                            video_dec = CompressedVideoDecoder(ros_msg.format, format_map)
-                            logging.info(f"CompressedVideo format={ros_msg.format}")
-                        for ft, fimg in video_dec.decode(bytes(ros_msg.data), t_ns):
-                            n_img += 1
-                            yield ft, fimg
-                    elif is_compressed_image:
-                        img = cv2.imdecode(np.frombuffer(bytes(ros_msg.data), np.uint8), cv2.IMREAD_COLOR)
-                        if img is not None:
-                            n_img += 1
-                            yield t_ns, img
-                    elif is_image:
-                        img = np.frombuffer(bytes(ros_msg.data), np.uint8).reshape(ros_msg.height, ros_msg.width, -1)
-                        enc = (ros_msg.encoding or "").lower()
-                        if img.shape[2] == 1:
-                            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-                        elif enc.startswith("rgb"):
-                            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                if is_compressed_video:
+                    if video_dec is None:
+                        video_dec = CompressedVideoDecoder(ros_msg.format, format_map)
+                        logging.info(f"CompressedVideo format={ros_msg.format}")
+                    for ft, fimg in video_dec.decode(bytes(ros_msg.data), t_ns):
                         n_img += 1
-                        yield t_ns, img.copy()
-                    else:
-                        logging.warning(f"unsupported image msg type: {name}, skip")
-                except Exception as e:
-                    logging.error(f"decode image err ({name}): {e}")
+                        yield ft, fimg
+                elif is_compressed_image:
+                    img = cv2.imdecode(np.frombuffer(bytes(ros_msg.data), np.uint8), cv2.IMREAD_COLOR)
+                    if img is not None:
+                        n_img += 1
+                        yield t_ns, img
+                elif is_image:
+                    img = np.frombuffer(bytes(ros_msg.data), np.uint8).reshape(ros_msg.height, ros_msg.width, -1)
+                    enc = (ros_msg.encoding or "").lower()
+                    if img.shape[2] == 1:
+                        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                    elif enc.startswith("rgb"):
+                        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    n_img += 1
+                    yield t_ns, img.copy()
+                else:
+                    logging.warning(f"unsupported image msg type: {name}, skip")
+            except Exception as e:
+                logging.error(f"decode image err: {e}")
         extra_err = f", video decode errors={video_dec.n_err}" if video_dec else ""
         logging.info(f"img frames count = {n_img}{extra_err}")
 
