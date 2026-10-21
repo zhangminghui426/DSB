@@ -37,6 +37,75 @@ def log_to_terminal(msg: str):
     if not msg.endswith("\n"):
         st.session_state["terminal_log"] += "\n"
 
+
+def parse_cam_intrinsic(text: str):
+    """解析内参文本，返回 (cam_type, K, dist)。
+
+    支持两种格式：
+      - YAML：camera_intrinsic: {type, K, dist}（或顶层 type/K/dist）
+      - 纯文本：3x3 K 矩阵 + 1 行 dist；或 1 行 fx fy cx cy + 1 行 dist
+    解析失败时返回 (None, None, None)。
+    """
+    import re
+    try:
+        import yaml
+    except ImportError:
+        yaml = None
+
+    if yaml is not None:
+        try:
+            d = yaml.safe_load(text)
+            if isinstance(d, dict):
+                ci = d.get("camera_intrinsic")
+                if not isinstance(ci, dict):
+                    ci = d
+                if isinstance(ci, dict) and ("K" in ci or "dist" in ci):
+                    cam_type = str(ci.get("type", "fisheye")).strip().lower()
+                    if cam_type not in ("fisheye", "pinhole"):
+                        cam_type = "fisheye"
+                    return cam_type, ci.get("K"), ci.get("dist")
+        except Exception:
+            pass
+
+    cam_type, K, dist = "fisheye", None, None
+    m = re.search(r"^\s*type\s*:\s*(\w+)", text, re.MULTILINE)
+    if m and m.group(1).lower() in ("fisheye", "pinhole"):
+        cam_type = m.group(1).lower()
+    nums = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith(("#", "//")):
+            continue
+        try:
+            row = [float(x) for x in re.split(r"[\s,;\[\]]+", ln) if x]
+        except ValueError:
+            row = []
+        if row:
+            nums.append(row)
+    rest = []
+    for i in range(len(nums) - 2):
+        if all(len(r) == 3 for r in nums[i:i + 3]):
+            K = nums[i:i + 3]
+            rest = nums[:i] + nums[i + 3:]
+            break
+    if K is None:
+        if len(nums) == 2 and len(nums[0]) == 4:
+            fx, fy, cx, cy = nums[0]
+            K = [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]]
+            rest = [nums[1]]
+        elif len(nums) == 1 and len(nums[0]) == 4:
+            fx, fy, cx, cy = nums[0]
+            K = [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]]
+        else:
+            rest = nums
+    if dist is None:
+        cand = [r for r in rest if len(r) in (4, 5, 8)]
+        if cand:
+            dist = cand[0]
+    if K is None:
+        return None, None, None
+    return cam_type, K, dist if dist is not None else [0.0, 0.0, 0.0, 0.0]
+
 # ==================== 侧边栏 ====================
 with st.sidebar:
     st.header("配置")
@@ -92,15 +161,25 @@ with st.sidebar:
 
     # 2. 相机内参
     st.subheader("2. 相机内参")
-    uploaded_cam = st.file_uploader("上传 内参.txt", type=["txt"])
-    cam_content = ""
+    uploaded_cam = st.file_uploader(
+        "上传 内参.txt (YAML: type/K/dist 或 fx fy cx cy + dist)", type=["txt"])
+    cam_type = st.session_state.get("cam_type", "fisheye")
     if uploaded_cam is not None:
         cam_content = uploaded_cam.read().decode("utf-8")
         cam_path = TMP_DIR / uploaded_cam.name
         with open(cam_path, "w", encoding="utf-8") as f:
             f.write(cam_content)
-        st.text_area("内参内容", cam_content, height=150)
-        log_to_terminal(f"[上传] 内参已保存: {cam_path}")
+        cam_type, K, dist = parse_cam_intrinsic(cam_content)
+        if cam_type is None:
+            st.error("内参解析失败，请检查文件格式（type/K/dist 或 fx fy cx cy + dist）")
+            log_to_terminal(f"[上传] 内参解析失败: {cam_path}")
+        else:
+            st.session_state["cam_type"] = cam_type
+            st.session_state["cam_K"] = K
+            st.session_state["cam_dist"] = dist
+            type_label = "鱼眼 (fisheye)" if cam_type == "fisheye" else "针孔 (pinhole)"
+            st.write(f"相机类型: **{type_label}**")
+            log_to_terminal(f"[上传] 内参已保存: {cam_path} (type={cam_type})")
 
     # 3. 检测器
     st.subheader("3. 检测器")
@@ -195,6 +274,15 @@ with tab1:
             second_model = str("/tmp/best_model.pth")
             roi = f"[[{x_min}, {x_max}], [{y_min}, {y_max}], [{z_min}, {z_max}]]"
             cam_yaml = "\n".join(f'    cam_{i + 1}: "{t}"' for i, t in enumerate(cam_sel))
+            # 相机内参：优先用上传文件解析结果，缺省回退默认鱼眼内参
+            cam_type = st.session_state.get("cam_type", "fisheye")
+            cam_K = st.session_state.get(
+                "cam_K", [[514.24, 0.0, 960.58], [0.0, 513.98, 768.73], [0.0, 0.0, 1.0]])
+            cam_dist = st.session_state.get("cam_dist", [0.0964, -0.0128, -0.0076, 0.0017])
+            def _yaml_num(x):
+                return repr(float(x))
+            k_str = "[" + ", ".join("[" + ", ".join(_yaml_num(v) for v in row) + "]" for row in cam_K) + "]"
+            d_str = "[" + ", ".join(_yaml_num(v) for v in cam_dist) + "]"
             cfg_text = f"""calib_board:
   hole_centers_board:
     [
@@ -232,14 +320,9 @@ format_map:
   x264: "h264"
 
 camera_intrinsic:
-  type: fisheye
-  K:
-    [
-      [514.24, 0.0, 960.58],
-      [0.0, 513.98, 768.73],
-      [0.0, 0.0, 1.0]
-    ]
-  dist: [0.0964, -0.0128, -0.0076, 0.0017]
+  type: {cam_type}
+  K: {k_str}
+  dist: {d_str}
 
 calib_algo:
   max_dt_ns: 100000000
