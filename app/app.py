@@ -133,6 +133,18 @@ with st.sidebar:
 # ==================== 主界面 ====================
 tab1, tab2, tab3, tab4 = st.tabs(["标定运行", "可视化质检", "结果输出", "3D点云预览"])
 
+# 日志与运行状态持久化（切换 tab / rerun 后仍保留）
+if "calib_log" not in st.session_state:
+    st.session_state["calib_log"] = ""
+if "calib_started" not in st.session_state:
+    st.session_state["calib_started"] = False
+if "calib_done" not in st.session_state:
+    st.session_state["calib_done"] = None  # None=未跑/运行中, True=成功, False=失败
+if "vis_log" not in st.session_state:
+    st.session_state["vis_log"] = ""
+if "vis_done" not in st.session_state:
+    st.session_state["vis_done"] = None
+
 with tab1:
     st.header("运行标定")
     mcap_file = st.session_state.get("mcap_file", "")
@@ -140,6 +152,29 @@ with tab1:
         st.warning("请先在左侧上传 .mcap 数据文件")
     else:
         st.markdown(f"**数据**: `{mcap_file}`  |  **检测器**: {detector_type}")
+
+    st.subheader("运行日志")
+    log_box = st.empty()
+    log_box.code(st.session_state["calib_log"], language="bash", height=400)
+
+    # 跨 rerun 保留的标定状态
+    if st.session_state["calib_done"] is True:
+        st.success("标定完成，结果见下方产物")
+        result_dir = PROJECT_ROOT / "outputs" / "result"
+        if result_dir.exists():
+            files = sorted(result_dir.glob("*"))
+            if files:
+                st.write("**生成的产物**")
+                for f in files:
+                    st.write(f"  - `{f.name}`  ({f.stat().st_size / 1024:.1f} KB)")
+            else:
+                st.warning("result 目录存在但为空，可能有效样本数不足")
+        else:
+            st.error(f"result 目录不存在: {result_dir}")
+    elif st.session_state["calib_done"] is False:
+        st.error("标定失败，请查看上方日志的错误信息")
+    elif st.session_state["calib_started"]:
+        st.info("标定运行中或上次运行被中断，切换页面不会丢失本次日志")
 
     if st.button("开始标定", type="primary", disabled=not mcap_file):
         lidar_topic = st.session_state.get("lidar_topic", "")
@@ -228,45 +263,41 @@ output_dir: "{PROJECT_ROOT / 'outputs'}"
         with open(tmp_cfg, "w", encoding="utf-8") as f:
             f.write(cfg_text)
 
-        st.subheader("运行日志")
-        log_box = st.empty()
-        log_text = ""
-        status_box = st.empty()
-        status_box.info("标定运行中...")
+        # 开始新一次标定：重置日志与状态
+        st.session_state["calib_log"] = ""
+        st.session_state["calib_started"] = True
+        st.session_state["calib_done"] = None
+        log_box.code("", language="bash", height=400)
+        st.info("标定运行中...")
 
-        proc = subprocess.Popen(
-            [sys.executable, str(SCRIPTS_DIR / "calib_lidar_cmaera.py"),
-             "--config", str(tmp_cfg)],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, cwd=str(PROJECT_ROOT), bufsize=1,
-        )
-        for line in proc.stdout:
-            log_text += line
-            # 同时输出到全局终端
-            log_to_terminal(line.rstrip())
-            # 固定高度, 带滚动条
-            log_box.code(log_text, language="bash", height=400)
-        proc.wait()
-
-        output_root = PROJECT_ROOT / "outputs"
-        result_dir = output_root / "result"
-
-        if proc.returncode == 0:
-            status_box.success(f"标定完成! (返回码 {proc.returncode})")
-            # 自动列出结果文件
-            st.subheader("生成的产物")
-            if result_dir.exists():
-                files = list(result_dir.glob("*"))
-                if files:
-                    for f in sorted(files):
-                        st.write(f"  - `{f.name}`  ({f.stat().st_size / 1024:.1f} KB)")
-                else:
-                    status_box.warning(f"result 目录存在但为空，可能有效样本数不足")
-            else:
-                status_box.error(f"result 目录不存在: {result_dir}")
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(SCRIPTS_DIR / "calib_lidar_cmaera.py"),
+                 "--config", str(tmp_cfg)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, cwd=str(PROJECT_ROOT), bufsize=1,
+            )
+        except Exception as e:
+            st.session_state["calib_done"] = False
+            st.session_state["calib_log"] += f"启动标定进程失败: {e}\n"
+            log_box.code(st.session_state["calib_log"], language="bash", height=400)
+            st.error(f"启动标定进程失败: {e}")
         else:
-            status_box.error(f"标定失败, 返回码 {proc.returncode}")
-            st.error("请查看上方日志的错误信息")
+            for line in proc.stdout:
+                st.session_state["calib_log"] += line
+                # 同时输出到全局终端
+                log_to_terminal(line.rstrip())
+                # 固定高度, 带滚动条
+                log_box.code(st.session_state["calib_log"], language="bash", height=400)
+            proc.wait()
+
+            if proc.returncode == 0:
+                st.session_state["calib_done"] = True
+                st.success(f"标定完成! (返回码 {proc.returncode})")
+            else:
+                st.session_state["calib_done"] = False
+                st.error(f"标定失败, 返回码 {proc.returncode}")
+                st.error("请查看上方日志的错误信息")
 
 with tab2:
     st.header("可视化质检")
@@ -276,39 +307,59 @@ with tab2:
     default_T = str(npy_files[0]) if npy_files \
         else str(result_dir / "cam_1_lidar2cam_fastcalib.npy")
     vis_T = st.text_input("外参文件路径", value=default_T)
-    if st.button("运行投影可视化"):
-        log_box = st.empty()
-        log_text = ""
-        proc = subprocess.Popen(
-            [sys.executable, str(SCRIPTS_DIR / "calib_lidar_cmaera.py"),
-             "--vis", vis_T, "--frame", str(vis_frame),
-             "--config", str(TMP_DIR / "_ui_config.yaml")],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, cwd=str(PROJECT_ROOT), bufsize=1,
-        )
-        for line in proc.stdout:
-            log_text += line
-            log_to_terminal(line.rstrip())
-            log_box.code(log_text, language="bash", height=400)
-        proc.wait()
-        if proc.returncode == 0:
-            st.success(f"可视化完成! (返回码 {proc.returncode})")
-            # 显示生成的投影图
-            vis_dir = PROJECT_ROOT / "outputs" / "vis_overlays"
-            if vis_dir.exists():
-                imgs = sorted(vis_dir.glob("*.jpg"))
-                if imgs:
-                    names = [p.name for p in imgs]
-                    sel_name = st.selectbox("投影图（帧）", options=names,
-                                            index=len(names) - 1)
-                    st.image(str(vis_dir / sel_name), caption=sel_name,
-                             use_container_width=True)
-                else:
-                    st.warning("vis_overlays 目录为空，未生成投影图，请检查 mcap/话题/外参")
+
+    st.subheader("可视化日志")
+    vis_log_box = st.empty()
+    vis_log_box.code(st.session_state["vis_log"], language="bash", height=300)
+
+    # 跨 rerun 保留的上次可视化结果（切 tab 后仍显示）
+    if st.session_state["vis_done"] is True:
+        vis_dir = PROJECT_ROOT / "outputs" / "vis_overlays"
+        if vis_dir.exists():
+            imgs = sorted(vis_dir.glob("*.jpg"))
+            if imgs:
+                names = [p.name for p in imgs]
+                sel_name = st.selectbox("投影图（帧）", options=names,
+                                        index=len(names) - 1, key="vis_img_sel")
+                st.image(str(vis_dir / sel_name), caption=sel_name,
+                         use_container_width=True)
             else:
-                st.warning(f"未找到投影图目录: {vis_dir}")
+                st.warning("vis_overlays 目录为空，未生成投影图，请检查 mcap/话题/外参")
         else:
-            st.error(f"可视化失败, 返回码 {proc.returncode}")
+            st.warning(f"未找到投影图目录: {vis_dir}")
+    elif st.session_state["vis_done"] is False:
+        st.error("可视化失败，请查看上方日志")
+
+    if st.button("运行投影可视化"):
+        st.session_state["vis_log"] = ""
+        st.session_state["vis_done"] = None
+        vis_log_box.code("", language="bash", height=300)
+        st.info("可视化运行中...")
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(SCRIPTS_DIR / "calib_lidar_cmaera.py"),
+                 "--vis", vis_T, "--frame", str(vis_frame),
+                 "--config", str(TMP_DIR / "_ui_config.yaml")],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, cwd=str(PROJECT_ROOT), bufsize=1,
+            )
+        except Exception as e:
+            st.session_state["vis_done"] = False
+            st.session_state["vis_log"] += f"启动可视化进程失败: {e}\n"
+            vis_log_box.code(st.session_state["vis_log"], language="bash", height=300)
+            st.error(f"启动可视化进程失败: {e}")
+        else:
+            for line in proc.stdout:
+                st.session_state["vis_log"] += line
+                log_to_terminal(line.rstrip())
+                vis_log_box.code(st.session_state["vis_log"], language="bash", height=300)
+            proc.wait()
+            if proc.returncode == 0:
+                st.session_state["vis_done"] = True
+                st.success(f"可视化完成! (返回码 {proc.returncode})")
+            else:
+                st.session_state["vis_done"] = False
+                st.error(f"可视化失败, 返回码 {proc.returncode}")
 
 with tab3:
     st.header("标定结果")
@@ -515,13 +566,17 @@ with tab4:
 
             # 批量检测所有帧 (subprocess 后台运行, 切 tab 不打断)
             st.subheader("批量检测所有帧")
+            if "batch_log" not in st.session_state:
+                st.session_state["batch_log"] = ""
+            batch_log_box = st.empty()
+            batch_log_box.code(st.session_state["batch_log"], language="bash", height=300)
+
             if st.button("运行 SECOND 检测全部帧"):
                 model_path = str("/tmp/best_model.pth")
                 out_dir = PROJECT_ROOT / "outputs" / "vis"
 
                 st.subheader("批量检测日志")
-                log_box = st.empty()
-                log_text = ""
+                st.session_state["batch_log"] = ""
                 st.info("批量检测运行中... 切换 tab 不会打断")
 
                 proc = subprocess.Popen(
@@ -535,9 +590,10 @@ with tab4:
                     text=True, cwd=str(PROJECT_ROOT), bufsize=1,
                 )
                 for line in proc.stdout:
-                    log_text += line
+                    st.session_state["batch_log"] += line
                     log_to_terminal(line.rstrip())
-                    log_box.code(log_text, language="bash", height=400)
+                    batch_log_box.code(st.session_state["batch_log"],
+                                       language="bash", height=300)
                 proc.wait()
 
                 if proc.returncode == 0:
