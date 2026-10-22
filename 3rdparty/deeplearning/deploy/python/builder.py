@@ -52,22 +52,22 @@ class EngineBuilder:
         subprocess.run(cmd, check=True, capture_output=True)
         return True
 
-    def _supports_strongly_typed(self):
-        """Probe `trtexec --help` for --stronglyTyped (TRT >= 10.12).
+    def _supports_fp16_flag(self):
+        """Probe trtexec --help for the legacy --fp16 flag.
 
-        On any probe failure we conservatively assume strong typing: adding
-        --fp16 to an 11.x trtexec fails outright, whereas omitting it on 10.x
-        only yields an FP32 engine (never a hard error).
+        TRT 10.x trtexec still accepts --fp16; TRT 11 removed it (strong
+        typing, precision comes from the ONNX graph). Probe failure falls
+        back to NOT adding --fp16 (safe: FP32 build, never a hard error).
         """
         if self.exe is None:
-            return True
+            return False
         try:
             proc = subprocess.run([self.exe, "--help"], capture_output=True,
                                   text=True, timeout=60)
             text = (proc.stdout or "") + (proc.stderr or "")
-            return "stronglyTyped" in text
+            return "--fp16" in text
         except (OSError, subprocess.TimeoutExpired):
-            return True
+            return False
 
     # ---------------------------------------------------------------- build
     def build(self, onnx_path, engine_path, fp16=False, autocast_fp16=False):
@@ -78,10 +78,10 @@ class EngineBuilder:
                 "the TensorRT tar package's bin/trtexec)")
 
         os.makedirs(osp.dirname(osp.abspath(engine_path)), exist_ok=True)
-        strong = self._supports_strongly_typed()
+        legacy_fp16 = self._supports_fp16_flag()
         src = onnx_path
         tmp_dir = None
-        if fp16 and strong:
+        if fp16 and not legacy_fp16:
             if autocast_fp16:
                 tmp_dir = tempfile.mkdtemp(prefix="trt_autocast_")
                 conv = osp.join(tmp_dir, osp.basename(onnx_path)
@@ -104,7 +104,7 @@ class EngineBuilder:
         cmd = (f"{shlex.quote(self.exe)} "
                f"--onnx={shlex.quote(osp.abspath(src))} "
                f"--saveEngine={shlex.quote(osp.abspath(engine_path))}")
-        if fp16 and not strong:
+        if fp16 and legacy_fp16:
             cmd += " --fp16"
         print("[trt] " + cmd)
         # Scratch dir so trtexec's extra output files never pollute CWD.
@@ -119,7 +119,7 @@ class EngineBuilder:
             tail = "\n".join(proc.stdout.splitlines()[-40:])
             raise RuntimeError(f"trtexec failed for {src}\n--- tail ---\n{tail}")
         print(f"[trt] built {engine_path} (trtexec, fp16={fp16}, "
-              f"strong={strong})")
+              f"legacy_fp16={legacy_fp16})")
 
     def build_graph(self, name, onnx_dir, engine_dir, fp16=False,
                     autocast_fp16=False):
