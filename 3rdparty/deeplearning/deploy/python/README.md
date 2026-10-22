@@ -39,9 +39,7 @@ kernel）不兼容，必须按上表重新导出。
 
 ## 导出 + 构建
 
-cd 3rdparty/deeplearning
-python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-    --outdir outputs/onnx_bf --engine-dir outputs/trt_bf --verify --fp16
+cd 3rdparty/deeplearning && python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx_bf --engine-dir outputs/trt_bf --verify --fp16
 
 参数：
 - --outdir：onnx 输出目录（默认 outputs/onnx_bf）
@@ -53,9 +51,7 @@ python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
 
 单独重建 engine（onnx 已存在时）：
 
-python deploy/python/builder.py --onnx_dir outputs/onnx_bf \
-    --engine_dir outputs/trt_bf \
-    --graphs camera.backbone,camera.vtransform,fuser,head.bbox --fp16
+cd 3rdparty/deeplearning && python deploy/python/builder.py --onnx_dir outputs/onnx_bf --engine_dir outputs/trt_bf --graphs camera.backbone,camera.vtransform,fuser,head.bbox --fp16
 
 ## SCN onnx 导出说明
 

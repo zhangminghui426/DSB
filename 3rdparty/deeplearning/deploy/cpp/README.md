@@ -54,8 +54,8 @@ deploy/cpp/
 ## 构建
 
 cd 3rdparty/deeplearning/deploy/cpp
-. tool/environment.sh          # 设 TensorRT/CUDA/SPCONV 路径
-bash tool/run.sh               # cmake + make + 运行
+. tool/environment.sh
+bash tool/run.sh
 
 产物：
 - build/bevfusion          可执行
@@ -93,9 +93,7 @@ cp outputs/onnx_bf/lidar.backbone.xyz.onnx model/resnet50/
 
 生成：
 
-cd 3rdparty/deeplearning
-python deploy/tools/export_example_data.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-    --sample-index 0 --out-dir outputs/example-data
+cd 3rdparty/deeplearning && python deploy/tools/export_example_data.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --sample-index 0 --out-dir outputs/example-data
 
 ## 运行
 
