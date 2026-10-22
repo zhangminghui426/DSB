@@ -1,5 +1,6 @@
-// 相机分支 CUDA 算子实现（参考 NVIDIA-AI-IOT/CUDA-BEVFusion camera-bevpool.cu）。
-// 数值语义与 src/ops/ops.cpp CPU 参考逐位对齐（fp32；rank 求和不归一化）。
+// 相机分支 fold+BEV 池化 CUDA 算子（对齐 NVIDIA-AI-IOT/CUDA-BEVFusion
+// camera-bevpool）。数值语义与 src/ops/ops.cpp CPU 参考逐位对齐（fp32；
+// rank 按 (x,y) 求和、Z 维折叠、不归一化）。
 
 #include "ops/camera-bevpool.hpp"
 
@@ -9,42 +10,10 @@ namespace dsb {
 
 namespace {
 
-// ---------------------------------------------------------------- geometry
-// 每线程一个 frustum 点，内循环 6 相机；输出 (N, D, fH, fW, 3)。
-// 相机侧几何等价于 CPU：xs=(W-1)*i/(fW-1)、ys=(H-1)*i/(fH-1)、ds=dbound0+dbound2*d；
-//   u = post_inv*[xs,ys,ds] - post_inv_t；cam = [u0*u2, u1*u2, u2]；
-//   w = combine*cam + c2l_t；e = la_rot*w + la_t。
-__global__ void geometry_kernel(const CudaGeometryParams p, float *geom) {
-  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  const int total = p.fH * p.fW * p.D;
-  if (tid >= total) return;
-  const int wi = tid % p.fW;
-  const int hi = (tid / p.fW) % p.fH;
-  const int di = tid / (p.fW * p.fH);
-  const float xs = (p.image_w - 1.0f) * wi / (p.fW - 1.0f);
-  const float ys = (p.image_h - 1.0f) * hi / (p.fH - 1.0f);
-  const float ds = p.dbound0 + p.dbound2 * di;
-
-  for (int c = 0; c < p.N; ++c) {
-    const float *pm = p.per_cam + c * 24;
-    const float u0 = pm[0] * xs + pm[1] * ys + pm[2] * ds - pm[9];
-    const float u1 = pm[3] * xs + pm[4] * ys + pm[5] * ds - pm[10];
-    const float u2 = pm[6] * xs + pm[7] * ys + pm[8] * ds - pm[11];
-    const float cam0 = u0 * u2, cam1 = u1 * u2, cam2 = u2;
-    const float *cm = pm + 12;
-    const float w0 = cm[0] * cam0 + cm[1] * cam1 + cm[2] * cam2 + pm[21];
-    const float w1 = cm[3] * cam0 + cm[4] * cam1 + cm[5] * cam2 + pm[22];
-    const float w2 = cm[6] * cam0 + cm[7] * cam1 + cm[8] * cam2 + pm[23];
-    float *gout = geom + ((long long)c * total + tid) * 3;
-    gout[0] = p.la[0] * w0 + p.la[1] * w1 + p.la[2] * w2 + p.la[9];
-    gout[1] = p.la[3] * w0 + p.la[4] * w1 + p.la[5] * w2 + p.la[10];
-    gout[2] = p.la[6] * w0 + p.la[7] * w1 + p.la[8] * w2 + p.la[11];
-  }
-}
-
 // ------------------------------------------------ fold depth + bev_pool 合并
 // 每线程一个几何点 i（= n*D*area + d*area + hw）：
-//   softmax(depthnet 深度 logits) -> depth_p；out[c, rank(i)] += depth_p * feat[c]
+//   softmax(depthnet 深度 logits) -> depth_p；out[c, (cx,cy)] += depth_p * feat[c]
+// 网格坐标含 Z 仅作范围过滤，输出按 (cx,cy) 折叠（Dz=nx2=1，与 CPU 一致）。
 __global__ void fold_bevpool_kernel(const CudaFoldPoolParams p,
                                     const float *dn, const float *geom,
                                     float *out) {
@@ -75,8 +44,11 @@ __global__ void fold_bevpool_kernel(const CudaFoldPoolParams p,
   const int cz = (int)floorf((g[2] - (p.bz - p.dz_ * 0.5f)) / p.dz_);
   if (cx < 0 || cx >= p.nx0 || cy < 0 || cy >= p.nx1 || cz < 0 || cz >= p.nx2)
     return;
+  // 输出 BEV 只保留 (x,y) 网格，Z 维仅做范围过滤后折叠累加
+  // （与 CPU 参考 ops.cpp bev_pool 一致：rank 排序按 (cx,cy) 求和，Dz=1）。
+  // 不能使用含 cz 的 rank：out 只分配了 C*nx0*nx1，cz>0 会越界写。
+  const long long rank = (long long)cx * p.nx1 + cy;
   const long long nbev = (long long)p.nx0 * p.nx1;
-  const long long rank = (long long)cz * nbev + (long long)cx * p.nx1 + cy;
 
   const float *feat = dn + (long long)n * ((p.D + p.C) * p.area) +
                       (long long)p.D * p.area + hw;
@@ -85,14 +57,6 @@ __global__ void fold_bevpool_kernel(const CudaFoldPoolParams p,
 }
 
 }  // namespace
-
-void cuda_compute_geometry(const CudaGeometryParams &p, float *geom,
-                           cudaStream_t stream) {
-  const int total = p.fH * p.fW * p.D;
-  const int threads = 256;
-  const int blocks = (total + threads - 1) / threads;
-  geometry_kernel<<<blocks, threads, 0, stream>>>(p, geom);
-}
 
 void cuda_fold_bevpool(const CudaFoldPoolParams &p, const float *depthnet,
                        const float *geom, float *out, cudaStream_t stream) {
