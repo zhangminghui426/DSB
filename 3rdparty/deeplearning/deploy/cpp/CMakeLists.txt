@@ -1,95 +1,117 @@
 cmake_minimum_required(VERSION 3.18)
-project(dsb_infer LANGUAGES CXX)
+project(bevfusion LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# =====================================================================
+# CUDA-BEVFusion 推理代码移植（NVIDIA-AI-IOT/CUDA-BEVFusion 原样构建）。
+# 依赖：CUDA >= 11 / TensorRT >= 8.5 / libprotobuf-dev / libspconv。
+# 配置：TENSORRT_ROOT、CUDA_ROOT、CUDNN_ROOT（或直接环境变量），
+#       SPCONV_CUDA_VERSION（默认 12.8，对应 libs/libspconv/lib/x86_64_cuda12.8）。
+# 运行：
+#   cd 3rdparty/deeplearning/deploy/cpp && mkdir -p build && cd build
+#   cmake .. && make -j$(nproc)
+# 产物：build/bevfusion + build/custom_layernorm.so（TRT plugin，main 内 dlopen）
+# =====================================================================
 
-# ---- CUDA (自定义算子 kernel：geometry / fold+bev_pool / downsample) ------
-include(CheckLanguage)
-check_language(CUDA)
-if(CMAKE_CUDA_COMPILER)
-  enable_language(CUDA)
-  set(CMAKE_CUDA_STANDARD 17)
-  set(DSB_HAVE_CUDA TRUE)
-else()
-  set(DSB_HAVE_CUDA FALSE)
+set(CMAKE_BUILD_TYPE "Release")
+set(arch ${CMAKE_HOST_SYSTEM_PROCESSOR})
+if(NOT DEFINED SPCONV_CUDA_VERSION)
+  set(SPCONV_CUDA_VERSION $ENV{SPCONV_CUDA_VERSION})
+endif()
+if(NOT SPCONV_CUDA_VERSION)
+  set(SPCONV_CUDA_VERSION "12.8")
 endif()
 
-# ---- TensorRT ---------------------------------------------------------
-# Point TENSORRT_ROOT at the TRT install, e.g.
-#   -DTENSORRT_ROOT=/opt/TensorRT-10.9.0.34
-# or export TENSORRT_ROOT before configuring.
+# ---- 根路径 ----------------------------------------------------------
 if(NOT DEFINED TENSORRT_ROOT)
   if(DEFINED ENV{TENSORRT_ROOT})
     set(TENSORRT_ROOT $ENV{TENSORRT_ROOT})
   elseif(EXISTS "/opt/TensorRT-10.9.0.34")
     set(TENSORRT_ROOT "/opt/TensorRT-10.9.0.34")
-  elseif(EXISTS "/usr/local/tensorrt")
-    set(TENSORRT_ROOT "/usr/local/tensorrt")
+  endif()
+endif()
+if(NOT DEFINED CUDA_ROOT)
+  if(DEFINED ENV{CUDA_HOME})
+    set(CUDA_ROOT $ENV{CUDA_HOME})
+  elseif(EXISTS "/usr/local/cuda-12.8")
+    set(CUDA_ROOT "/usr/local/cuda-12.8")
+  elseif(EXISTS "/usr/local/cuda")
+    set(CUDA_ROOT "/usr/local/cuda")
   endif()
 endif()
 
-find_path(TENSORRT_INCLUDE_DIR NvInfer.h PATHS ${TENSORRT_ROOT}/include)
-find_library(TENSORRT_LIB nvinfer PATHS ${TENSORRT_ROOT}/lib ${TENSORRT_ROOT}/lib64)
-if(NOT TENSORRT_INCLUDE_DIR OR NOT TENSORRT_LIB)
-  message(FATAL_ERROR "TensorRT not found. Set -DTENSORRT_ROOT=<trt-root>")
-endif()
+# ---- 依赖库（相对本仓库） --------------------------------------------
+set(BEVFUSION_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+set(spconv_include ${BEVFUSION_ROOT}/libs/libspconv/include)
+set(spconv_lib ${BEVFUSION_ROOT}/libs/libspconv/lib/${arch}_cuda${SPCONV_CUDA_VERSION})
 
-# ---- CUDA (used only for device buffers / stream in trt_engine) --------
-find_package(CUDAToolkit QUIET)
-if(CUDAToolkit_FOUND AND DSB_HAVE_CUDA)
-  set(DSB_HAVE_CUDA TRUE)
-else()
-  set(DSB_HAVE_CUDA FALSE)
-endif()
-if(NOT DSB_HAVE_CUDA)
-  # 自定义算子 kernel 与 TRT 执行（enqueueV3 + device buffers）都依赖 CUDA。
-  message(FATAL_ERROR "CUDA toolkit not found: custom ops / TRT execution require it. Install CUDA or set CMAKE_CUDA_COMPILER.")
-endif()
+message(STATUS "TensorRT: ${TENSORRT_ROOT}")
+message(STATUS "CUDA:     ${CUDA_ROOT}")
+message(STATUS "libspconv: ${spconv_lib}")
 
-# ---- OpenCV (optional: decode raw jpg input; not required) -------------
-find_package(OpenCV QUIET COMPONENTS core imgcodecs imgproc)
-if(OpenCV_FOUND)
-  set(DSB_HAVE_OPENCV TRUE)
-else()
-  set(DSB_HAVE_OPENCV FALSE)
-endif()
-
-# 标准工程布局（与 deploy/python 三层对应）：
-#   include/dsb_infer/  公共头文件（preprocess/inference/ops/postprocess + 基础设施）
-#   src/                实现（main/pipeline/config + 四层同名 .cpp）
-add_executable(dsb_infer
-  src/main.cpp
-  src/pipeline.cpp
-  src/config.cpp
-  src/preprocess/preprocess.cpp
-  src/inference/inference.cpp
-  src/inference/trt_engine.cpp
-  src/ops/ops.cpp
-  src/postprocess/postprocess.cpp
+include_directories(
+  ${BEVFUSION_ROOT}/src
+  ${BEVFUSION_ROOT}/src/common
+  ${BEVFUSION_ROOT}/dependencies/stb
+  ${BEVFUSION_ROOT}/dependencies/dlpack/include
+  ${BEVFUSION_ROOT}/libs/cuosd
+  ${spconv_include}
+  ${TENSORRT_ROOT}/include
+  ${CUDA_ROOT}/include
 )
-if(DSB_HAVE_CUDA)
-  target_sources(dsb_infer PRIVATE
-    src/ops/camera-geometry.cu
-    src/ops/camera-bevpool.cu
-    src/ops/camera-backbone.cu
-    src/ops/lidar-scn.cu
-  )
-endif()
-target_include_directories(dsb_infer PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${TENSORRT_INCLUDE_DIR}
-)
-target_link_libraries(dsb_infer PRIVATE ${TENSORRT_LIB})
-if(DSB_HAVE_CUDA)
-  target_link_libraries(dsb_infer PRIVATE CUDA::cudart)
-  target_compile_definitions(dsb_infer PRIVATE DSB_HAVE_CUDA=1)
-endif()
-if(DSB_HAVE_OPENCV)
-  target_link_libraries(dsb_infer PRIVATE ${OpenCV_LIBS})
-  target_compile_definitions(dsb_infer PRIVATE DSB_HAVE_OPENCV=1)
-endif()
-target_compile_options(dsb_infer PRIVATE -O2 -Wall)
 
-message(STATUS "TensorRT: ${TENSORRT_LIB}")
-message(STATUS "CUDA: ${DSB_HAVE_CUDA}  OpenCV: ${DSB_HAVE_OPENCV}")
+link_directories(
+  ${TENSORRT_ROOT}/lib
+  ${CUDA_ROOT}/lib64
+  ${spconv_lib}
+)
+
+file(GLOB_RECURSE CORE_FILES
+  ${BEVFUSION_ROOT}/src/bevfusion/*.cu
+  ${BEVFUSION_ROOT}/src/bevfusion/*.cpp
+  ${BEVFUSION_ROOT}/src/onnx/*.cpp
+  ${BEVFUSION_ROOT}/src/common/tensor.cu
+  ${BEVFUSION_ROOT}/src/common/tensorrt.cpp
+)
+file(GLOB_RECURSE VISUALIZE_FILES
+  ${BEVFUSION_ROOT}/libs/cuosd/*.cpp
+  ${BEVFUSION_ROOT}/libs/cuosd/*.cu
+  ${BEVFUSION_ROOT}/src/common/visualize.cu
+)
+
+enable_language(CUDA)
+find_package(CUDA REQUIRED)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_FLAGS_RELEASE "-std=c++17 -O3 -DENABLE_TEXT_BACKEND_STB -Wno-deprecated-declarations -Wno-unused-parameter")
+set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -gencode arch=compute_80,code=sm_80 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89 -gencode arch=compute_90,code=sm_90)
+
+find_package(Protobuf REQUIRED)
+
+####################### bevfusion_core ##########################
+cuda_add_library(bevfusion_core SHARED ${CORE_FILES})
+target_link_libraries(bevfusion_core
+  libcudart.so
+  libcublasLt.so
+  libnvinfer.so
+  libnvinfer_plugin.so
+  libspconv.so
+  ${Protobuf_LIBRARIES}
+)
+set_target_properties(bevfusion_core PROPERTIES
+  BUILD_RPATH ${spconv_lib})
+
+####################### bevfusion ###############################
+cuda_add_executable(bevfusion src/main.cpp ${VISUALIZE_FILES})
+target_link_libraries(bevfusion
+  bevfusion_core
+  libnvinfer.so
+  libspconv.so
+  ${Protobuf_LIBRARIES}
+)
+set_target_properties(bevfusion PROPERTIES
+  BUILD_RPATH ${spconv_lib}
+  INSTALL_RPATH ${spconv_lib})
+
+####################### custom_layernorm.so ######################
+cuda_add_library(custom_layernorm SHARED src/plugins/custom_layernorm.cu)
+target_link_libraries(custom_layernorm libnvinfer.so libnvinfer_plugin.so)
