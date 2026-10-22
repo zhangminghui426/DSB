@@ -21,7 +21,8 @@
 # DEALINGS IN THE SOFTWARE.
 
 # configure the environment
-. tool/environment.sh
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. ${SCRIPT_DIR}/cpp/tool/environment.sh
 
 if [ "$ConfigurationStatus" != "Success" ]; then
     echo "Exit due to configure failure."

@@ -2,7 +2,7 @@
 
 C++ 推理前置：模型导出 + engine 构建。推理本体在 deploy/cpp/（CUDA-BEVFusion 移植）。
 本目录负责把训练侧模型按 CUDA-BEVFusion 模型结构导出为 5 个 onnx；
-engine 构建统一走 CUDA-BEVFusion 原版脚本 deploy/cpp/tool/build_trt_engine.sh。
+engine 构建统一走 CUDA-BEVFusion 原版脚本 deploy/build_trt_engine.sh（Python/C++ 共用）。
 
 ## 目录结构
 
@@ -14,6 +14,7 @@ deploy/
 │   ├── funcs.py          #   layer_fusion_bn（BN 融合进卷积权重）
 │   ├── tensor.py         #   tensor 文件格式工具
 │   └── quantize.py       #   PTQ 量化接口（非量化模型自动跳过）
+├── build_trt_engine.sh  # CUDA-BEVFusion 原版 engine 构建脚本（Python/C++ 共用）
 ├── python/               # Python 推理库（历史保留，preprocess/inference/postprocess/runtime）
 └── tools/
     └── export_example_data.py  # example-data 输入导出（见 cpp/README.md）
@@ -48,10 +49,12 @@ CPU 逐图与 torch 对照，worst rel diff < 5e-3）。
 
 ## engine 构建（CUDA-BEVFusion 原版脚本）
 
+脚本在 deploy/ 根目录（Python/C++ 共用，模型统一放 3rdparty/deeplearning/model/<name>/）：
+
 ```bash
-cd 3rdparty/deeplearning/deploy/cpp
-cp ../../outputs/onnx_bf/camera.backbone.onnx ../../outputs/onnx_bf/camera.vtransform.onnx ../../outputs/onnx_bf/fuser.onnx ../../outputs/onnx_bf/head.bbox.onnx model/resnet50/
-DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash tool/build_trt_engine.sh
+cd 3rdparty/deeplearning
+cp outputs/onnx_bf/camera.backbone.onnx outputs/onnx_bf/camera.vtransform.onnx outputs/onnx_bf/fuser.onnx outputs/onnx_bf/head.bbox.onnx model/resnet50/
+DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 ```
 
 脚本特性（与参考一致）：trtexec --fp16 + IO 格式强制 fp16:chw（fuser 输出 HALF，

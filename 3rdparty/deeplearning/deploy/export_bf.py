@@ -14,9 +14,9 @@
 
 SCN onnx 依赖 GPU（模型 .half() 推理 trace）；
 engine 构建统一走 CUDA-BEVFusion 原版脚本（--fp16 + IO fp16:chw）：
-  cd 3rdparty/deeplearning/deploy/cpp
-  cp ../../outputs/onnx_bf/camera.backbone.onnx ../../outputs/onnx_bf/camera.vtransform.onnx ../../outputs/onnx_bf/fuser.onnx ../../outputs/onnx_bf/head.bbox.onnx model/resnet50/
-  DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash tool/build_trt_engine.sh
+  cd 3rdparty/deeplearning
+  cp outputs/onnx_bf/camera.backbone.onnx outputs/onnx_bf/camera.vtransform.onnx outputs/onnx_bf/fuser.onnx outputs/onnx_bf/head.bbox.onnx model/resnet50/
+  DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 """
 
 import argparse
@@ -264,9 +264,9 @@ def main():
 
     print()
     print("[export_bf] engine 构建（CUDA-BEVFusion 原版脚本，--fp16 + IO fp16:chw）：")
-    print("  cd 3rdparty/deeplearning/deploy/cpp")
-    print("  cp ../../outputs/onnx_bf/camera.backbone.onnx ../../outputs/onnx_bf/camera.vtransform.onnx ../../outputs/onnx_bf/fuser.onnx ../../outputs/onnx_bf/head.bbox.onnx model/resnet50/")
-    print("  DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash tool/build_trt_engine.sh")
+    print("  cd 3rdparty/deeplearning")
+    print("  cp outputs/onnx_bf/camera.backbone.onnx outputs/onnx_bf/camera.vtransform.onnx outputs/onnx_bf/fuser.onnx outputs/onnx_bf/head.bbox.onnx model/resnet50/")
+    print("  DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh")
 
 
 if __name__ == "__main__":

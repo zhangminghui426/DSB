@@ -39,7 +39,6 @@ deploy/cpp/
 │   └── dlpack/
 └── tool/
     ├── environment.sh      # 环境变量（TensorRT / CUDA / SPCONV 路径）
-    ├── build_trt_engine.sh # trtexec 从 onnx 构建 engine（参考脚本）
     └── run.sh              # cmake + make + 运行
 ```
 
@@ -78,14 +77,17 @@ model/<name>/build/fuser.plan
 model/<name>/build/head.bbox.plan
 model/<name>/lidar.backbone.xyz.onnx     # libspconv 运行时解析，不走 TRT
 
-模型目录放在 deploy/cpp/ 下（main.cpp 以 cwd 为基准拼接 model/<name>/）：
+模型目录统一放在 3rdparty/deeplearning/model/<name>/（Python/C++ 共用，
+main.cpp 以 cwd 为基准拼接 model/<name>/，运行时 cwd = 3rdparty/deeplearning）：
 
 ```bash
-cd 3rdparty/deeplearning/deploy/cpp
+cd 3rdparty/deeplearning
 mkdir -p model/resnet50/build
-cp ../../outputs/trt_bf/*.plan model/resnet50/build/
-cp ../../outputs/onnx_bf/lidar.backbone.xyz.onnx model/resnet50/
+cp outputs/onnx_bf/lidar.backbone.xyz.onnx model/resnet50/
 ```
+
+（4 个 .plan 由 deploy/build_trt_engine.sh 直接输出到 model/resnet50/build/，
+见 [../python/README.md#engine-构建cuda-bevfusion-原版脚本](../python/README.md#engine-构建cuda-bevfusion-原版脚本)）
 
 ## 数据（example-data）
 
@@ -106,8 +108,8 @@ cd 3rdparty/deeplearning && python deploy/tools/export_example_data.py configs/d
 ## 运行
 
 ```bash
-cd 3rdparty/deeplearning/deploy/cpp
-./build/bevfusion ../../outputs/example-data resnet50 fp16
+cd 3rdparty/deeplearning
+./deploy/cpp/build/bevfusion outputs/example-data resnet50 fp16
 ```
 
 参数：<data 目录> <模型名> <precision：fp16|int8>。输出 dumped 中间结果

@@ -41,4 +41,6 @@ make -j
 
 cd ..
 
-./build/bevfusion ${DEBUG_DATA:-../../outputs/example-data} ${DEBUG_MODEL:-resnet50} ${DEBUG_PRECISION:-fp16}
+# 运行：cwd 回到 3rdparty/deeplearning（模型/数据统一相对该目录）
+cd ../..
+./deploy/cpp/build/bevfusion ${DEBUG_DATA:-outputs/example-data} ${DEBUG_MODEL:-resnet50} ${DEBUG_PRECISION:-fp16}
