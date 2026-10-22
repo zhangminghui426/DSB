@@ -63,17 +63,10 @@ cd 3rdparty/deeplearning && python deploy/python/builder.py --onnx_dir outputs/o
   字符串（None_→"None"、ReLU→"ReLU"，与 3DSparseConvolution parser 一致）
 - 权重布局：spconv 2.x OKI (Cout,K,D,H,Cin)，fuse_bn 按输出通道缩放（布局无关）
 
-## TRT 版本与精度
-
-- TRT 10.x：trtexec 支持 --fp16，直接构建 FP16 engine（参考默认）
-- TRT >= 10.12 / 11.x：--fp16 被移除（强类型），需 --autocast-fp16
-  （pip install nvidia-modelopt），否则构建 FP32 engine
-- builder 自动探测 trtexec --help 是否含 --fp16 决定分支
-
 ## 产物
 
 - outputs/onnx_bf/：5 个 onnx
 - outputs/trt_bf/：4 个 .plan（camera.backbone / camera.vtransform / fuser / head.bbox）
 
 engine 命名与 deploy/cpp/src/main.cpp 读取路径一致（model/<name>/build/*.plan），
-放置方法见 cpp/README.md「模型布局」。
+放置方法见 [cpp/README.md#模型布局](../cpp/README.md#模型布局)。

@@ -27,10 +27,10 @@ deploy/
 
 ## 使用流程
 
-1. 导出模型 + 构建 engine（Python，见 python/README.md）
-2. 按 main.cpp 布局放置模型（见 cpp/README.md「模型布局」）
-3. 生成 example-data 输入（见 cpp/README.md「数据」）
-4. 构建并运行 C++ 推理（见 cpp/README.md）
+1. 导出模型 + 构建 engine（Python）：[python/README.md](python/README.md)
+2. 按 main.cpp 布局放置模型：[cpp/README.md#模型布局](cpp/README.md#模型布局)
+3. 生成 example-data 输入：[cpp/README.md#数据example-data](cpp/README.md#数据example-data)
+4. 构建并运行 C++ 推理：[cpp/README.md](cpp/README.md)
 
 ## 产物
 
@@ -41,14 +41,6 @@ deploy/
   - head.bbox.onnx：middle → score/rot/dim/reg/height/vel
   - lidar.backbone.xyz.onnx：稀疏编码器（libspconv 运行时解析，不走 TRT）
 - outputs/trt_bf/：4 个 .plan（camera.backbone / camera.vtransform / fuser / head.bbox）
-
-## TRT 版本说明
-
-- TRT 10.x：trtexec 支持 legacy `--fp16`，直接构建 FP16 engine（推荐）
-- TRT >= 10.12 / 11.x：强类型（precision 由 ONNX 图表达），`--fp16` 被移除，
-  需要 ModelOpt AutoCast 转混合 FP16 onnx（--autocast-fp16，需 pip install nvidia-modelopt），
-  否则构建 FP32 engine
-- 版本在构建时自动探测（builder.py 检查 trtexec --help 是否含 --fp16）
 
 ## 自定义算子归属
 
