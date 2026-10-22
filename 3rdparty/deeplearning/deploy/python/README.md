@@ -1,24 +1,41 @@
 # Python 导出/校验（deploy/python/）
 
-C++ 推理前置：模型导出 + engine 构建。推理本体在 deploy/cpp/（CUDA-BEVFusion）。
+C++ 推理前置：模型导出 + engine 构建。推理本体在 deploy/cpp/（CUDA-BEVFusion 移植）。
+本目录负责把训练侧模型按 CUDA-BEVFusion 模型结构导出为 5 个 onnx，并用 trtexec
+构建 4 个 TRT engine。
 
 ## 目录结构
 
-- export_bf.py：CUDA-BEVFusion 结构导出主入口（5 个 onnx + engine 构建 + verify）
-- lean/：NVIDIA qat/lean 移植（SCN onnx 导出，去除 mmdet3d 依赖）
-- python/：Python 推理库（builder.py trtexec 构建等，历史保留）
-- tools/export_example_data.py：example-data 输入导出（见 cpp/README.md）
+```
+deploy/
+├── export_bf.py          # 主入口：导出 + verify + engine 构建
+├── lean/                 # NVIDIA qat/lean 移植（SCN onnx 导出，去除 mmdet3d 依赖）
+│   ├── exptool.py        #   SparseConvolution 符号 trace、onnx 节点构建
+│   ├── funcs.py          #   layer_fusion_bn（BN 融合进卷积权重）
+│   ├── tensor.py         #   tensor 文件格式工具
+│   └── quantize.py       #   PTQ 量化接口（非量化模型自动跳过）
+├── python/               # Python 推理库（历史保留）
+│   ├── builder.py        #   trtexec 构建 engine（版本自动探测）
+│   └── (preprocess/inference/postprocess/runtime 等)
+└── tools/
+    └── export_example_data.py  # example-data 输入导出（见 cpp/README.md）
+```
 
-## 导出内容
+## 导出模型结构
 
-5 个 onnx 与 CUDA-BEVFusion 模型结构对齐：
+5 个 onnx 与 CUDA-BEVFusion 完全对齐（engine 绑定名与 deploy/cpp/src/main.cpp
+create_core 一致）：
 
-- camera.backbone：img + depth → camera_feature（HWC）+ camera_depth_weights
-  （backbone+neck+dtransform+depthnet 合并导出，softmax 在图中）
-- camera.vtransform：feat_in 360x360 → feat_out 180x180（= downsample）
-- fuser：camera + lidar → middle
-- head.bbox：middle → score/rot/dim/reg/height/vel（decode 由 C++ kernel 完成）
-- lidar.backbone.xyz：稀疏编码器（voxels + coors → dense BEV，libspconv 解析）
+| onnx | 输入 → 输出 | 说明 |
+| --- | --- | --- |
+| camera.backbone | img(B,N,3,256,704) + depth → camera_feature(B,N,32,88,C) + camera_depth_weights(B,N,D,32,88) | backbone+neck+dtransform+depthnet 合并导出；camera_feature 为 HWC 布局（bevpool kernel 按此取数）；depth_weights 已 softmax |
+| camera.vtransform | feat_in(1,80,360,360) → feat_out(1,80,180,180) | = vtransform.downsample，输入是 bev_pool 输出 |
+| fuser | camera(1,80,180,180) + lidar(1,256,180,180) → middle(1,512,180,180) | transfusion decoder |
+| head.bbox | middle(1,512,180,180) → score/rot/dim/reg/height/vel | decode 由 C++ head-transbbox.cu kernel 完成（reg 按 (2,num) 布局） |
+| lidar.backbone.xyz | voxels(1,5) + coors(1,4) → dense BEV(1,256,180,180) | 稀疏编码器；libspconv 运行时解析，不走 TRT |
+
+注意：此结构与旧版导出（img→feats、feats+depth→depthnet 分离 + 外部 downsample
+kernel）不兼容，必须按上表重新导出。
 
 ## 导出 + 构建
 
@@ -26,13 +43,41 @@ cd 3rdparty/deeplearning
 python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --outdir outputs/onnx_bf --engine-dir outputs/trt_bf --verify --fp16
 
-参数：--verify 用 onnxruntime 逐图与 torch 对照（tol 5e-3）；--onnx-only 只导出
-onnx；--fp16 构建 FP16 engine（TRT 10.x 走 trtexec --fp16，TRT 11 用
---autocast-fp16 需要 nvidia-modelopt）。
+参数：
+- --outdir：onnx 输出目录（默认 outputs/onnx_bf）
+- --engine-dir：engine 输出目录（默认 outputs/trt_bf）
+- --verify：用 onnxruntime（CPU）逐图与 torch 对照，worst rel diff < 5e-3
+- --onnx-only：只导出 onnx，跳过 engine 构建
+- --fp16：构建 FP16 engine（TRT 10.x 生效）
+- --autocast-fp16：TRT 11 strong typing 下用 ModelOpt AutoCast 转混合 FP16
 
-## 说明
+单独重建 engine（onnx 已存在时）：
 
-- SCN onnx 需要 GPU（模型 .half() trace，BN 自动融合进权重）
-- 产物：outputs/onnx_bf/*.onnx（5）+ outputs/trt_bf/*.plan（4）
-- 单独重建 engine：python deploy/python/builder.py --onnx_dir outputs/onnx_bf \
-  --engine_dir outputs/trt_bf --graphs camera.backbone,camera.vtransform,fuser,head.bbox --fp16
+python deploy/python/builder.py --onnx_dir outputs/onnx_bf \
+    --engine_dir outputs/trt_bf \
+    --graphs camera.backbone,camera.vtransform,fuser,head.bbox --fp16
+
+## SCN onnx 导出说明
+
+- 需要 GPU：模型 .half() 推理 trace（单点占位输入 voxels(1,5)+coors(1,4)）
+- BN 融合：参考是 PTQ 模型（BN 已折叠），我们的 FP 模型在导出前自动执行
+  funcs.layer_fusion_bn（conv+bn 融合进权重，ReLU 保留为独立节点）
+- 非量化模型跳过 PTQ 属性设置（quantize 为 stub）
+- act_type：spconv 2.x 是 tv.gemm.Activation 枚举，导出时自动序列化为
+  字符串（None_→"None"、ReLU→"ReLU"，与 3DSparseConvolution parser 一致）
+- 权重布局：spconv 2.x OKI (Cout,K,D,H,Cin)，fuse_bn 按输出通道缩放（布局无关）
+
+## TRT 版本与精度
+
+- TRT 10.x：trtexec 支持 --fp16，直接构建 FP16 engine（参考默认）
+- TRT >= 10.12 / 11.x：--fp16 被移除（强类型），需 --autocast-fp16
+  （pip install nvidia-modelopt），否则构建 FP32 engine
+- builder 自动探测 trtexec --help 是否含 --fp16 决定分支
+
+## 产物
+
+- outputs/onnx_bf/：5 个 onnx
+- outputs/trt_bf/：4 个 .plan（camera.backbone / camera.vtransform / fuser / head.bbox）
+
+engine 命名与 deploy/cpp/src/main.cpp 读取路径一致（model/<name>/build/*.plan），
+放置方法见 cpp/README.md「模型布局」。
