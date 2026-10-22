@@ -9,9 +9,19 @@ C++ 推理完全移植 NVIDIA CUDA-BEVFusion（deploy/cpp/），不再区分预�
 ```
 deploy/
 ├── README.md           # 本文件（部署总览）
+├── build_trt_engine.sh # engine 构建脚本（CUDA-BEVFusion 原版，Python/C++ 共用，
+│                       #   --fp16 + IO fp16:chw，输出 model/<name>/build/*.plan）
 ├── export_bf.py        # CUDA-BEVFusion 结构 ONNX 导出（5 个 onnx + verify）
-├── python/             # Python 导出/校验库
+├── python/             # Python 导出/校验库 + bf 推理包
 │   ├── README.md       # Python 侧说明
+│   ├── bf/             # bf：CUDA-BEVFusion 结构 Python 部署
+│   │   │               #   （.plan 加载 + 自定义 CUDA 算子 + spconv，见 bf/README.md）
+│   │   ├── setup.py    #   编译 bevfusion_ops 自定义算子
+│   │   ├── src/bevfusion_ops.cu  #   depth/geometry/bevpool/voxelize kernel
+│   │   ├── runtime.py  #   .plan 加载与执行
+│   │   ├── cuda_ops.py #   算子封装
+│   │   ├── sparse.py   #   spconv.pytorch 稀疏编码器
+│   │   └── infer.py    #   推理编排 + head decode
 │   ├── lean/           # NVIDIA qat/lean 移植（SCN onnx 导出）
 │   │   ├── exptool.py  #   SparseConvolution 符号 trace / onnx 图构建
 │   │   ├── funcs.py    #   BN 融合 / ReLU 融合 / 权重加载
