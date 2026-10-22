@@ -78,11 +78,13 @@ model/<name>/build/fuser.plan
 model/<name>/build/head.bbox.plan
 model/<name>/lidar.backbone.xyz.onnx     # libspconv 运行时解析，不走 TRT
 
+模型目录放在 deploy/cpp/ 下（main.cpp 以 cwd 为基准拼接 model/<name>/）：
+
 ```bash
-cd 3rdparty/deeplearning
+cd 3rdparty/deeplearning/deploy/cpp
 mkdir -p model/resnet50/build
-cp outputs/trt_bf/*.plan model/resnet50/build/
-cp outputs/onnx_bf/lidar.backbone.xyz.onnx model/resnet50/
+cp ../../outputs/trt_bf/*.plan model/resnet50/build/
+cp ../../outputs/onnx_bf/lidar.backbone.xyz.onnx model/resnet50/
 ```
 
 ## 数据（example-data）

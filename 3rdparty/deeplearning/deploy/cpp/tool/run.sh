@@ -41,4 +41,4 @@ make -j
 
 cd ..
 
-./build/bevfusion $DEBUG_DATA $DEBUG_MODEL $DEBUG_PRECISION
+./build/bevfusion ${DEBUG_DATA:-../../outputs/example-data} ${DEBUG_MODEL:-resnet50} ${DEBUG_PRECISION:-fp16}

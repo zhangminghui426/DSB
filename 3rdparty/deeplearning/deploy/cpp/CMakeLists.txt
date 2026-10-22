@@ -85,8 +85,12 @@ set(CMAKE_CXX_FLAGS_RELEASE "-std=c++17 -O3 -DENABLE_TEXT_BACKEND_STB -Wno-depre
 
 find_package(Protobuf REQUIRED)
 
-function(bevfusion_cuda_target name)
-  add_library(${name} ${ARGN})
+function(bevfusion_cuda_target name type)
+  if(type STREQUAL "EXECUTABLE")
+    add_executable(${name} ${ARGN})
+  else()
+    add_library(${name} ${type} ${ARGN})
+  endif()
   set_target_properties(${name} PROPERTIES CUDA_STANDARD 17)
   target_compile_options(${name} PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_80,code=sm_80>
@@ -109,7 +113,7 @@ set_target_properties(bevfusion_core PROPERTIES
   BUILD_RPATH ${spconv_lib})
 
 ####################### bevfusion ###############################
-bevfusion_cuda_target(bevfusion src/main.cpp ${VISUALIZE_FILES})
+bevfusion_cuda_target(bevfusion EXECUTABLE src/main.cpp ${VISUALIZE_FILES})
 target_link_libraries(bevfusion
   bevfusion_core
   libnvinfer.so
