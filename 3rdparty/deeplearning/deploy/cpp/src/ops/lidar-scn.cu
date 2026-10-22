@@ -1,10 +1,10 @@
-// lidar 稀疏编码 CUDA 算子实现（参考 CUDA-BEVFusion lidar-voxelization 组织）。
+// lidar 稀疏编码 CUDA 算子实现（对齐 NVIDIA-AI-IOT/CUDA-BEVFusion lidar-scn）。
 // 与 CPU 参考（ops.cpp sparse_encoder_forward）同语义：
 //   subm：输出体素 == 输入体素，查 hash 找邻居；
 //   strided：out = (in + pad - offset)/stride（可整除维），输出需唯一化；
 //   稠密化：(C*Z, X, Y) 布局 out[(c*Z+z)*XY + x*Y + y] = feat[voxel(x,y,z)][c]。
 
-#include "ops/lidar-sparse.hpp"
+#include "ops/lidar-scn.hpp"
 
 #include <math.h>
 

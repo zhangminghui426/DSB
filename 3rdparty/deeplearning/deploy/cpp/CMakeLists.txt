@@ -70,9 +70,10 @@ add_executable(dsb_infer
 )
 if(DSB_HAVE_CUDA)
   target_sources(dsb_infer PRIVATE
+    src/ops/camera-geometry.cu
     src/ops/camera-bevpool.cu
     src/ops/camera-backbone.cu
-    src/ops/lidar-sparse.cu
+    src/ops/lidar-scn.cu
   )
 endif()
 target_include_directories(dsb_infer PRIVATE

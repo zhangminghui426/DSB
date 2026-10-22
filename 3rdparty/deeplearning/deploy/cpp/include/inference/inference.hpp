@@ -9,7 +9,8 @@
 #include "inference/trt_engine.hpp"
 #include "ops/camera-backbone.hpp"
 #include "ops/camera-bevpool.hpp"
-#include "ops/lidar-sparse.hpp"
+#include "ops/camera-geometry.hpp"
+#include "ops/lidar-scn.hpp"
 
 #include <cuda_runtime_api.h>
 

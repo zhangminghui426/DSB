@@ -36,7 +36,7 @@ Python 与 C++ 按同一三层结构组织（预处理 / 推理 / 后处理）�
 | --- | --- | --- | --- |
 | 预处理 | `src/preprocess/preprocess.cpp`（头 `include/preprocess/preprocess.hpp`） | `deploy/python/preprocess.py` | 加载导出输入、lidar 深度投影、点云体素化 |
 | 推理 | `src/inference/`（inference.cpp + trt_engine.cpp） | `deploy/python/inference.py` + bev_pool_torch | TRT engine 编排（几何/bev_pool/降采样/稀疏编码走 `ops/`） |
-| 算子 | `src/ops/ops.cpp`（CPU 参考）+ `src/ops/camera-{bevpool,backbone}.cu` + `src/ops/lidar-sparse.cu` | `3rdparty/deeplearning/ops/`（参考） | CPU 参考 + CUDA 自定义算子：bev_pool / 体素化 / 稀疏卷积 |
+| 算子 | `src/ops/ops.cpp`（CPU 参考）+ `src/ops/camera-{geometry,bevpool,backbone}.cu` + `src/ops/lidar-scn.cu` | `3rdparty/deeplearning/ops/`（参考） | CPU 参考 + CUDA 自定义算子：bev_pool / 体素化 / 稀疏卷积 |
 | 后处理 | `src/postprocess/postprocess.cpp` | `deploy/python/postprocess.py` | 检测解码（NMS + bbox coder + 过滤） |
 | 编排 | `src/pipeline.cpp` | `deploy/python/scripts/pipeline.py` | 三层组合 + verify / dump |
 
@@ -49,11 +49,11 @@ stream 串行执行：
 
 | 文件 | kernel | 替代的 CPU 步骤 | 说明 |
 | --- | --- | --- | --- |
-| `camera-bevpool.cu` | `geometry_kernel` | `compute_geometry` | 每线程一个 frustum 点 × 6 相机，反投影到 lidar 系 |
+| `camera-geometry.cu` | `geometry_kernel` | `compute_geometry` | 每线程一个 frustum 点 × 6 相机，反投影到 lidar 系 |
 | `camera-bevpool.cu` | `fold_bevpool_kernel` | `fold_depth_features` + `bev_pool` | 深度 softmax 折入特征 + 网格量化 + `atomicAdd` 求和（合并两步、免中间张量） |
 | `camera-backbone.cu` | `downsample_kernel` | `downsample_conv` | 逐层 3×3 conv + BN + ReLU |
-| `lidar-sparse.cu` | `sparse_subm_kernel` / `sparse_strided_pass{1,2}` + `sparse_bn_relu_kernel` | `sparse_encoder_forward`（subm / strided 稀疏卷积） | 坐标 hash 表（开放寻址）查邻居；strided 独立输出表唯一化 + 原子累加 |
-| `lidar-sparse.cu` | `sparse_densify_kernel` | 稀疏输出稠密化 | 网格点查最后一层 hash，写 `(C*Z, X, Y)` |
+| `lidar-scn.cu` | `sparse_subm_kernel` / `sparse_strided_pass{1,2}` + `sparse_bn_relu_kernel` | `sparse_encoder_forward`（subm / strided 稀疏卷积） | 坐标 hash 表（开放寻址）查邻居；strided 独立输出表唯一化 + 原子累加 |
+| `lidar-scn.cu` | `sparse_densify_kernel` | 稀疏输出稠密化 | 网格点查最后一层 hash，写 `(C*Z, X, Y)` |
 
 - 数值语义与 `src/ops/ops.cpp` 的 CPU 参考逐位对齐（rank 求和、无归一化；
   稀疏卷积含 bias + BN + ReLU）。坐标 key 加 4096 偏移保证非负，避免与
@@ -124,16 +124,17 @@ deploy/cpp/
     inference/inference.hpp    #   推理层
     inference/trt_engine.hpp   #   TRT engine 加载/执行
     ops/ops.hpp                #   自定义 CPU 算子（对应 3rdparty/deeplearning/ops/ 参考）
-    ops/camera-bevpool.hpp     #   CUDA：几何反投影 + fold/bev_pool 参数与入口
+    ops/camera-geometry.hpp    #   CUDA：frustum 反投影到 lidar 系（geometry kernel）
+    ops/camera-bevpool.hpp     #   CUDA：fold + bev_pool（atomic 求和）
     ops/camera-backbone.hpp    #   CUDA：BEV 降采样 conv（CudaDownsampleLayer）
-    ops/lidar-sparse.hpp       #   CUDA：稀疏卷积 + 稠密化（CudaSparseLayer）
+    ops/lidar-scn.hpp       #   CUDA：稀疏卷积 + 稠密化（CudaSparseLayer）
     postprocess/postprocess.hpp#   后处理层
   src/                         # 实现
     main.cpp                   #   CLI 入口
     pipeline.cpp  config.cpp
     preprocess/  inference/
-    ops/                       #   ops.cpp（CPU 参考）+ camera-bevpool.cu +
-                               #   camera-backbone.cu + lidar-sparse.cu（CUDA kernel）
+    ops/                       #   ops.cpp（CPU 参考）+ camera-geometry.cu +
+                               #   camera-bevpool.cu + camera-backbone.cu + lidar-scn.cu（CUDA kernel）
     postprocess/
 ```
 

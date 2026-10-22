@@ -1,6 +1,10 @@
 #pragma once
-// 相机 BEV 下采样 CUDA 算子（对应 CUDA-BEVFusion camera 分支 backbone 之后的
-// BEV 处理）：逐层 3x3 conv + BN + ReLU，替代 CPU 版 downsample_conv。
+// BEV 下采样 CUDA 算子：逐层 3x3 conv + BN + ReLU，替代 CPU 版
+// downsample_conv。
+// 注意与 CUDA-BEVFusion 的差异：参考实现把 downsample 并入 vtransform
+// TRT engine（网络内），无独立 kernel；本仓库导出时 vtransform 截断到
+// depthnet 输出，BEV 下采样留在外部，故保留本 kernel 承接 camera 链
+// bev_pool 输出 -> cam_bev。
 // 调用方负责设备内存与 stream；函数在传入 stream 上异步执行，调用方负责同步。
 
 #include <cuda_runtime.h>

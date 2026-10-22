@@ -1,4 +1,5 @@
-// 相机 BEV 下采样 CUDA 算子实现（对应 CUDA-BEVFusion camera 分支 BEV 处理）。
+// BEV 下采样 CUDA 算子实现（CUDA-BEVFusion 中该步骤并入 vtransform engine，
+// 本仓库导出 vtransform 截断到 depthnet，故独立承接 bev_pool -> cam_bev）。
 // 数值语义与 src/ops/ops.cpp CPU 参考（downsample_conv）逐位对齐：bias 起步、
 // 3x3 滑窗累加、BN(acc-mean)/sqrt(var+eps)*g+b、ReLU。
 
