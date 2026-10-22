@@ -22,6 +22,7 @@ export CUDNN_Lib=${CUDNN_Root:-/usr/local/cuda}/lib64
 
 # libspconv：CUDA 12.x 用 12.8（本仓库已含 libs/libspconv/lib/x86_64_cuda12.8）
 export SPCONV_CUDA_VERSION=${SPCONV_CUDA_VERSION:-12.8}
+export ConfigurationStatus=Success
 
 # 模型/数据目录（相对 3rdparty/deeplearning）
 export BEVFUSION_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

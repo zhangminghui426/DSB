@@ -1,22 +1,20 @@
 # Python 导出/校验（deploy/python/）
 
 C++ 推理前置：模型导出 + engine 构建。推理本体在 deploy/cpp/（CUDA-BEVFusion 移植）。
-本目录负责把训练侧模型按 CUDA-BEVFusion 模型结构导出为 5 个 onnx，并用 trtexec
-构建 4 个 TRT engine。
+本目录负责把训练侧模型按 CUDA-BEVFusion 模型结构导出为 5 个 onnx；
+engine 构建统一走 CUDA-BEVFusion 原版脚本 deploy/cpp/tool/build_trt_engine.sh。
 
 ## 目录结构
 
 ```
 deploy/
-├── export_bf.py          # 主入口：导出 + verify + engine 构建
+├── export_bf.py          # 主入口：CUDA-BEVFusion 结构 ONNX 导出 + verify
 ├── lean/                 # NVIDIA qat/lean 移植（SCN onnx 导出，去除 mmdet3d 依赖）
 │   ├── exptool.py        #   SparseConvolution 符号 trace、onnx 节点构建
 │   ├── funcs.py          #   layer_fusion_bn（BN 融合进卷积权重）
 │   ├── tensor.py         #   tensor 文件格式工具
 │   └── quantize.py       #   PTQ 量化接口（非量化模型自动跳过）
-├── python/               # Python 推理库（历史保留）
-│   ├── builder.py        #   trtexec 构建 engine（版本自动探测）
-│   └── (preprocess/inference/postprocess/runtime 等)
+├── python/               # Python 推理库（历史保留，preprocess/inference/postprocess/runtime）
 └── tools/
     └── export_example_data.py  # example-data 输入导出（见 cpp/README.md）
 ```
@@ -37,25 +35,29 @@ create_core 一致）：
 注意：此结构与旧版导出（img→feats、feats+depth→depthnet 分离 + 外部 downsample
 kernel）不兼容，必须按上表重新导出。
 
-## 导出 + 构建
+## 导出
 
 ```bash
-cd 3rdparty/deeplearning && python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx_bf --engine-dir outputs/trt_bf --verify --fp16
+cd 3rdparty/deeplearning && python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx_bf --verify
 ```
 
-参数：
-- --outdir：onnx 输出目录（默认 outputs/onnx_bf）
-- --engine-dir：engine 输出目录（默认 outputs/trt_bf）
-- --verify：用 onnxruntime（CPU）逐图与 torch 对照，worst rel diff < 5e-3
-- --onnx-only：只导出 onnx，跳过 engine 构建
-- --fp16：构建 FP16 engine（TRT 10.x 生效）
-- --autocast-fp16：TRT 11 strong typing 下用 ModelOpt AutoCast 转混合 FP16
+参数：--outdir（onnx 输出目录，默认 outputs/onnx_bf）、--verify（用 onnxruntime
+CPU 逐图与 torch 对照，worst rel diff < 5e-3）。
 
-单独重建 engine（onnx 已存在时）：
+产物：outputs/onnx_bf/ 下 5 个 onnx。
+
+## engine 构建（CUDA-BEVFusion 原版脚本）
 
 ```bash
-cd 3rdparty/deeplearning && python deploy/python/builder.py --onnx_dir outputs/onnx_bf --engine_dir outputs/trt_bf --graphs camera.backbone,camera.vtransform,fuser,head.bbox --fp16
+cd 3rdparty/deeplearning/deploy/cpp
+cp ../../outputs/onnx_bf/camera.backbone.onnx ../../outputs/onnx_bf/camera.vtransform.onnx ../../outputs/onnx_bf/fuser.onnx ../../outputs/onnx_bf/head.bbox.onnx model/resnet50/
+DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash tool/build_trt_engine.sh
 ```
+
+脚本特性（与参考一致）：trtexec --fp16 + IO 格式强制 fp16:chw（fuser 输出 HALF，
+与 main.cpp transfusion.cu 断言匹配）、workspace 2GB、导出 layer info JSON、
+已存在 .plan 跳过。产物：model/resnet50/build/*.plan（camera.backbone /
+camera.vtransform / fuser / head.bbox）。
 
 ## SCN onnx 导出说明
 
@@ -67,10 +69,8 @@ cd 3rdparty/deeplearning && python deploy/python/builder.py --onnx_dir outputs/o
   字符串（None_→"None"、ReLU→"ReLU"，与 3DSparseConvolution parser 一致）
 - 权重布局：spconv 2.x OKI (Cout,K,D,H,Cin)，fuse_bn 按输出通道缩放（布局无关）
 
-## 产物
-
-- outputs/onnx_bf/：5 个 onnx
-- outputs/trt_bf/：4 个 .plan（camera.backbone / camera.vtransform / fuser / head.bbox）
+## 模型布局
 
 engine 命名与 deploy/cpp/src/main.cpp 读取路径一致（model/<name>/build/*.plan），
-放置方法见 [cpp/README.md#模型布局](../cpp/README.md#模型布局)。
+lidar.backbone.xyz.onnx 直接放 model/<name>/，放置方法见
+[cpp/README.md#模型布局](../cpp/README.md#模型布局)。

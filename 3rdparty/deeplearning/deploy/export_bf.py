@@ -1,4 +1,4 @@
-"""CUDA-BEVFusion 结构 ONNX 导出 + TRT engine 构建（det）。
+"""CUDA-BEVFusion 结构 ONNX 导出（det）。
 
 与 NVIDIA-AI-IOT/CUDA-BEVFusion 的模型结构对齐（5 个 onnx）：
   camera.backbone    img + depth -> camera_feature(B,N,fH,fW,C) + camera_depth_weights(B,N,D,fH,fW)
@@ -10,12 +10,13 @@
 
 用法：
   python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-      --outdir outputs/onnx_bf --engine-dir outputs/trt_bf --verify
+      --outdir outputs/onnx_bf --verify
 
-SCN onnx 依赖 GPU（模型 .half() 推理 trace），camera/head 链可在 CPU 验证；
-engine 构建用 trtexec（--fp16 / --autocast-fp16），产物命名与 CUDA-BEVFusion
-main.cpp 一致：camera.backbone.plan / camera.vtransform.plan / fuser.plan /
-head.bbox.plan / lidar.backbone.xyz.onnx。
+SCN onnx 依赖 GPU（模型 .half() 推理 trace）；
+engine 构建统一走 CUDA-BEVFusion 原版脚本（--fp16 + IO fp16:chw）：
+  cd 3rdparty/deeplearning/deploy/cpp
+  cp ../../outputs/onnx_bf/camera.backbone.onnx ../../outputs/onnx_bf/camera.vtransform.onnx ../../outputs/onnx_bf/fuser.onnx ../../outputs/onnx_bf/head.bbox.onnx model/resnet50/
+  DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash tool/build_trt_engine.sh
 """
 
 import argparse
@@ -194,14 +195,7 @@ def main():
     ap.add_argument("config")
     ap.add_argument("checkpoint")
     ap.add_argument("--outdir", default=osp.join("outputs", "onnx_bf"))
-    ap.add_argument("--engine-dir", default=osp.join("outputs", "trt_bf"))
     ap.add_argument("--opset", type=int, default=13)
-    ap.add_argument("--fp16", action="store_true",
-                    help="trtexec --fp16（参考默认 fp16 engine）")
-    ap.add_argument("--autocast-fp16", action="store_true",
-                    help="ModelOpt-AutoCast 后构建（strong typing）")
-    ap.add_argument("--onnx-only", action="store_true",
-                    help="只导出 onnx，跳过 engine 构建")
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--options", nargs="*", default=[])
     args = ap.parse_args()
@@ -268,34 +262,11 @@ def main():
     export_scn_onnx(model, scn_path)
     print("[export_bf] scn:", scn_path)
 
-    if args.onnx_only:
-        return
-
-    # ---- trtexec 构建 engine（与 CUDA-BEVFusion tool/build_trt_engine.sh 一致）----
-    from deploy.python.builder import EngineBuilder
-
-    builder = EngineBuilder()
-    if args.autocast_fp16:
-        builder.build_all(DeployConfigBF(args))
-    else:
-        os.makedirs(args.engine_dir, exist_ok=True)
-        for name in BF_IO:
-            onnx_path = osp.join(args.outdir, f"{name}.onnx")
-            engine_path = osp.join(args.engine_dir, f"{name}.plan")
-            builder.build(onnx_path, engine_path, fp16=args.fp16)
-        print("[export_bf] engines:", osp.join(args.engine_dir, "*.plan"))
-
-
-class DeployConfigBF:
-    """autocast-fp16 模式的最小配置适配（ModelOpt AutoCast + build）。"""
-
-    def __init__(self, args):
-        self.task = "det"
-        self.onnx_dir = args.outdir
-        self.engine_dir = args.engine_dir
-        self.fp16 = args.fp16
-        self.autocast_fp16 = args.autocast_fp16
-        self.graph_names = list(BF_IO)
+    print()
+    print("[export_bf] engine 构建（CUDA-BEVFusion 原版脚本，--fp16 + IO fp16:chw）：")
+    print("  cd 3rdparty/deeplearning/deploy/cpp")
+    print("  cp ../../outputs/onnx_bf/camera.backbone.onnx ../../outputs/onnx_bf/camera.vtransform.onnx ../../outputs/onnx_bf/fuser.onnx ../../outputs/onnx_bf/head.bbox.onnx model/resnet50/")
+    print("  DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash tool/build_trt_engine.sh")
 
 
 if __name__ == "__main__":

@@ -4,8 +4,7 @@ ONNX 导出与 engine 构建是 Python/C++ 推理共用的前置步骤，入口�
 deploy/export.py（本包之上）；本包负责 engine 加载与三层推理编排。
 
 Entry points (each has a CLI; run from the model repo 3rdparty/deeplearning):
-  python deploy/export.py                CONFIG CKPT --task det [--verify]  # 前置导出
-  python deploy/python/builder.py        --task det [--fp16]                # 仅构建 engine
+  python deploy/export_bf.py  CONFIG CKPT [--verify]   # CUDA-BEVFusion 结构 ONNX 导出
   python deploy/python/scripts/pipeline.py  CONFIG --task det [--checkpoint] [--verify]
   python deploy/python/scripts/visualize.py CONFIG CKPT --engine_dir outputs/trt
 
@@ -17,7 +16,6 @@ Entry points (each has a CLI; run from the model repo 3rdparty/deeplearning):
 其他模块：
   config       DeployConfig: shared paths / precision / behavior knobs
   graphs       GRAPH_IO + DET_HEAD_KEYS: single source of tensor names
-  builder      EngineBuilder: ONNX -> engine via the trtexec CLI only
   runtime      TrtEngine + load_engines: engine load / execute
   bev_pool_torch   camera_bev_from_depthnet (geometry + bev_pool)
 
