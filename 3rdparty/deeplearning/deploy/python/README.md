@@ -53,3 +53,36 @@ bash deploy/launch/visualize_trt.sh --sample-index 5
 - C++ 推理输入/权重/参考导出：`deploy/tools/export_cpp_input.py`（见
   `deploy/cpp/README.md`）
 - 部署总览见 [`../README.md`](../README.md)
+
+## CUDA-BEVFusion 结构导出（deploy/export_bf.py）
+
+C++ 侧 `deploy/cpp/` 已完全移植 NVIDIA CUDA-BEVFusion 推理代码，模型导出
+需与其结构对齐（5 个 onnx，engine 命名与 `deploy/cpp/src/main.cpp`
+`create_core` 一致）：
+
+```
+camera.backbone    img + depth -> camera_feature(B,N,fH,fW,C) + camera_depth_weights(B,N,D,fH,fW)
+camera.vtransform  feat_in(1,80,360,360) -> feat_out(1,80,180,180)
+fuser              camera(1,80,180,180) + lidar(1,256,180,180) -> middle(1,512,180,180)
+head.bbox          middle -> score/rot/dim/reg/height/vel
+lidar.backbone.xyz voxels + coors -> dense BEV（libspconv 解析）
+```
+
+导出 + 构建：
+
+```bash
+cd 3rdparty/deeplearning
+python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+    --outdir outputs/onnx_bf --engine-dir outputs/trt_bf --verify --fp16
+```
+
+说明：
+- `camera.backbone` 合并导出（backbone+neck+dtransform+depthnet），
+  `camera_depth_weights` 已 softmax（bevpool kernel 直接乘）；
+  `camera_feature` 为 HWC 布局（`(B,N,fH,fW,C)`）。
+- `head.bbox` 输出 6 个原始预测（decode 由 C++ `head-transbbox.cu` kernel 完成）。
+- `lidar.backbone.xyz.onnx` 由 `deploy/lean/`（NVIDIA qat/lean 移植）导出，
+  依赖 GPU（模型 `.half()` trace）与 spconv；非量化模型自动跳过 PTQ 处理。
+- 运行输入：`deploy/tools/export_example_data.py`（example-data：6 jpg +
+  `.tensor` 矩阵 + points.tensor），见 `deploy/cpp/README.md`。
+

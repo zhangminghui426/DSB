@@ -79,16 +79,24 @@ file(GLOB_RECURSE VISUALIZE_FILES
 )
 
 enable_language(CUDA)
-find_package(CUDA REQUIRED)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS_RELEASE "-std=c++17 -O3 -DENABLE_TEXT_BACKEND_STB -Wno-deprecated-declarations -Wno-unused-parameter")
-set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -gencode arch=compute_80,code=sm_80 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_89,code=sm_89 -gencode arch=compute_90,code=sm_90)
 
 find_package(Protobuf REQUIRED)
 
+function(bevfusion_cuda_target name)
+  add_library(${name} ${ARGN})
+  set_target_properties(${name} PROPERTIES CUDA_STANDARD 17)
+  target_compile_options(${name} PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_80,code=sm_80>
+    $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_86,code=sm_86>
+    $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_89,code=sm_89>
+    $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_90,code=sm_90>)
+endfunction()
+
 ####################### bevfusion_core ##########################
-cuda_add_library(bevfusion_core SHARED ${CORE_FILES})
+bevfusion_cuda_target(bevfusion_core SHARED ${CORE_FILES})
 target_link_libraries(bevfusion_core
   libcudart.so
   libcublasLt.so
@@ -101,7 +109,7 @@ set_target_properties(bevfusion_core PROPERTIES
   BUILD_RPATH ${spconv_lib})
 
 ####################### bevfusion ###############################
-cuda_add_executable(bevfusion src/main.cpp ${VISUALIZE_FILES})
+bevfusion_cuda_target(bevfusion src/main.cpp ${VISUALIZE_FILES})
 target_link_libraries(bevfusion
   bevfusion_core
   libnvinfer.so
@@ -113,5 +121,5 @@ set_target_properties(bevfusion PROPERTIES
   INSTALL_RPATH ${spconv_lib})
 
 ####################### custom_layernorm.so ######################
-cuda_add_library(custom_layernorm SHARED src/plugins/custom_layernorm.cu)
+bevfusion_cuda_target(custom_layernorm SHARED src/plugins/custom_layernorm.cu)
 target_link_libraries(custom_layernorm libnvinfer.so libnvinfer_plugin.so)
