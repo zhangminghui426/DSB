@@ -110,16 +110,3 @@ cd 3rdparty/deeplearning/deploy/cpp
 
 参数：<data 目录> <模型名> <precision：fp16|int8>。输出 dumped 中间结果
 （cam_bev / lidar_bev / decoder_feat .bin）+ 检测可视化 jpg。
-
-## 调试
-
-- 各阶段耗时：main.cpp 使用 common/timer.hpp 打印 per-stage 时间
-- 与 torch 对照：Python 侧 export_bf.py --verify 已保证 onnx 与 torch 对齐；
-  C++ 结果可对比 dumped .bin 与 torch 输出
-- 稀疏卷积卡顿/段错误：确认 libspconv 变体与 CUDA 版本匹配（x86_64_cuda12.8）
-
-## 与旧实现的关系
-
-旧三层实现（include/{preprocess,inference,postprocess} + 自研 CUDA ops）已移除，
-由 CUDA-BEVFusion 参考实现替代。自研实现的 git 历史保留在仓库中：
-git log --oneline 3rdparty/deeplearning/deploy/cpp
