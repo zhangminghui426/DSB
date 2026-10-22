@@ -79,10 +79,16 @@ def fuse_bn(conv, bn):
     """
     Given a conv Module `A` and an batch_norm module `B`, returns a conv
     module `C` such that C(x) == B(A(x)) in inference mode.
+    布局无关实现：conv.weight 首维为输出通道（spconv 2.x OKI 布局即可），
+    按输出通道缩放，避免 NVIDIA 原版按 torchsparse 布局写死的 permute。
     """
-    #assert(not (conv.training or bn.training)), "Fusion only for eval!"
-    conv.weight, conv.bias = fuse_bn_weights(conv.weight.permute(4, 0, 1, 2, 3), conv.bias, bn.running_mean, bn.running_var, bn.eps, bn.weight, bn.bias)
-    conv.weight.data = conv.weight.data.permute(1, 2, 3, 4, 0)
+    scale = bn.weight * torch.rsqrt(bn.running_var + bn.eps)
+    if conv.bias is None:
+        conv.bias = torch.nn.Parameter(torch.zeros_like(bn.running_mean))
+    conv.weight.data = (
+        conv.weight.data * scale.reshape([-1] + [1] * (conv.weight.ndim - 1))
+    ).contiguous()
+    conv.bias.data = (conv.bias.data - bn.running_mean) * scale + bn.bias
 
 def load_checkpoint(model, file, startsname=None):
 
