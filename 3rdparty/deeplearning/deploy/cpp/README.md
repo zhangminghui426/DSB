@@ -31,7 +31,7 @@ deploy/cpp/
 │   └── main.cpp            # 入口：读 example-data（jpg + tensor），forward + visualize
 ├── libs/
 │   ├── libspconv/          # 3DSparseConvolution：include + 预编译 .so
-│   │   └── lib/x86_64_cuda12.8/libspconv.so   # 还有 cuda11.4 等变体
+│   │   └── lib/x86_64_cuda12.8/libspconv.so   # 真实二进制（仅 cuda12.8）
 │   ├── cuosd/              # 可视化标注（BEV + 6 相机画框）
 │   └── spconv-onnx/        # 3DSparseConvolution 的 onnx parser 参考
 ├── dependencies/
@@ -48,8 +48,8 @@ deploy/cpp/
 - CUDA 12.8：/usr/local/cuda-12.8
 - TensorRT 10.9：/opt/TensorRT-10.9.0.34
 - libprotobuf-dev：apt install libprotobuf-dev
-- libspconv 预编译库：仓库已含 libs/libspconv/lib/x86_64_cuda12.8（CUDA 12.x）
-  （CUDA 11.x 环境用 x86_64_cuda11.4 变体）
+- libspconv 预编译库：libs/libspconv/lib/x86_64_cuda12.8/libspconv.so（真实二进制入库，
+  仅支持 CUDA 12.x）
 
 ## 构建
 
