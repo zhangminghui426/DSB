@@ -36,6 +36,15 @@ initializers = []
 enable_trace = False
 inverse_indices = False
 
+
+def _activation_name(act):
+    """spconv 2.x act_type 是 tv.gemm.Activation 枚举，转 onnx 可序列化字符串。"""
+    if act is None:
+        return "None"
+    name = getattr(act, "name", None) or str(act)
+    return "None" if name in ("None_",) else name
+
+
 def register_node(fn):
 
     fnnames   = fn.split(".")
@@ -117,7 +126,7 @@ def symbolic_sparse_convolution(self, ilayer, y, x):
             groups = self.groups,
             subm = self.subm,
             rulebook = self.indice_key,
-            activation = getattr(self, "act_type", "None"),
+            activation = _activation_name(getattr(self, "act_type", None)),
             input_shape  = x.features.shape,
             output_shape = y.features.shape
         )
@@ -172,7 +181,7 @@ def symbolic_sparse_convolution_quant(self, ilayer, y, x):
             groups = self.groups,
             subm = self.subm,
             rulebook = self.indice_key,
-            activation = getattr(self, "act_type", "None"),
+            activation = _activation_name(getattr(self, "act_type", None)),
             input_shape  = x.features.shape,
             output_shape = y.features.shape,
             input_dynamic_range  = self._input_quantizer.amax.cpu().item(),
