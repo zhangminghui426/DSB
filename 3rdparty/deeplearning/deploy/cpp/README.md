@@ -53,9 +53,11 @@ deploy/cpp/
 
 ## 构建
 
+```bash
 cd 3rdparty/deeplearning/deploy/cpp
 . tool/environment.sh
 bash tool/run.sh
+```
 
 产物：
 - build/bevfusion          可执行
@@ -76,10 +78,12 @@ model/<name>/build/fuser.plan
 model/<name>/build/head.bbox.plan
 model/<name>/lidar.backbone.xyz.onnx     # libspconv 运行时解析，不走 TRT
 
+```bash
 cd 3rdparty/deeplearning
 mkdir -p model/resnet50/build
 cp outputs/trt_bf/*.plan model/resnet50/build/
 cp outputs/onnx_bf/lidar.backbone.xyz.onnx model/resnet50/
+```
 
 ## 数据（example-data）
 
@@ -93,12 +97,16 @@ cp outputs/onnx_bf/lidar.backbone.xyz.onnx model/resnet50/
 
 生成：
 
+```bash
 cd 3rdparty/deeplearning && python deploy/tools/export_example_data.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --sample-index 0 --out-dir outputs/example-data
+```
 
 ## 运行
 
+```bash
 cd 3rdparty/deeplearning/deploy/cpp
 ./build/bevfusion ../../outputs/example-data resnet50 fp16
+```
 
 参数：<data 目录> <模型名> <precision：fp16|int8>。输出 dumped 中间结果
 （cam_bev / lidar_bev / decoder_feat .bin）+ 检测可视化 jpg。
