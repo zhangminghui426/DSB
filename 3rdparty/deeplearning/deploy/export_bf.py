@@ -173,11 +173,16 @@ def export_scn_onnx(model, save):
 
     参考 qat/export-scn.py：voxels(1,5) + coors(1,4) 单点占位 trace，
     权重来自 checkpoint（非量化模型，跳过 PTQ 属性设置）。
+
+    注意：参考是 PTQ 模型（BN 已在训练期折叠），我们的 FP 模型需要先
+    layer_fusion_bn 把 conv+bn 融合进卷积权重，否则 trace 时 BN 输出
+    tensor 无法注册（残差加法 get_tensor_id 断言失败）。
     """
-    from lean import exptool
+    from lean import exptool, funcs
 
     backbone = model.encoders["lidar"]["backbone"]
     backbone.eval().half()
+    funcs.layer_fusion_bn(backbone)  # 融合 conv+bn（ReLU 保留为独立节点）
     voxels = torch.zeros(1, 5, dtype=torch.float16, device="cuda")
     coors = torch.zeros(1, 4, dtype=torch.int32, device="cuda")
     exptool.export_onnx(backbone, voxels, coors, 1, False, save)
