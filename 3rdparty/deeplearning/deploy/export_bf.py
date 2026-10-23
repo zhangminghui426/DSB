@@ -186,6 +186,9 @@ def export_scn_onnx(model, save):
     funcs.layer_fusion_bn(backbone)  # 融合 conv+bn（ReLU 保留为独立节点）
     voxels = torch.zeros(1, 5, dtype=torch.float16, device="cuda")
     coors = torch.zeros(1, 4, dtype=torch.int32, device="cuda")
+    # xyz/OKI 导出（inverse=False）：用户机器 libspconv(.so) 实测接受
+    # (Cout,Kz,Ky,Kx,Cin) 布局（0 断言，Lidar Backbone 跑通）。
+    # 若需 zyx（官方默认，性能略优）可改 True，C++ 侧不变。
     exptool.export_onnx(backbone, voxels, coors, 1, False, save)
 
 

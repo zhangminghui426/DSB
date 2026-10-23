@@ -77,24 +77,6 @@ def register_node(fn):
         setattr(fn_module, fn_name, internal_forward)
     return make_hook
 
-def _to_oki_weight(w, in_channels, out_channels):
-    """把 conv 权重统一转成 3DSparseConvolution/libspconv 期望的 OKI (Cout, K, D, H, Cin)。
-
-    spconv 各版本 Parameter 布局不同（(Cin,Cout,D,H,K) / (Cout,K,D,H,Cin) /
-    (K,D,H,Cin,Cout) 等），以 in/out_channels 与形状匹配自动识别。
-    """
-    if w.dim() == 5 and w.shape[0] == out_channels and w.shape[-1] == in_channels:
-        return w                                # (Cout, K, D, H, Cin)
-    if w.dim() == 5 and w.shape[1] == out_channels:
-        return w.permute(1, 4, 2, 3, 0)         # (Cin, Cout, D, H, K) -> (Cout, K, D, H, Cin)
-    if w.dim() == 5 and w.shape[-1] == out_channels:
-        return w.permute(4, 0, 1, 2, 3)         # (K, D, H, Cin, Cout) -> (Cout, K, D, H, Cin)
-    if w.dim() == 6:
-        # (Cin, Cout, K, D, H, W) -> (Cout, K, D, H, W, Cin)
-        return w.permute(1, 2, 3, 4, 5, 0)
-    raise RuntimeError(f"cannot normalize conv weight shape {tuple(w.shape)} "
-                       f"in={in_channels} out={out_channels}")
-
 @register_node("spconv.conv.SparseConvolution.forward")
 def symbolic_sparse_convolution(self, ilayer, y, x):
     register_tensor(y)
@@ -115,8 +97,9 @@ def symbolic_sparse_convolution(self, ilayer, y, x):
     output_size[1] = self.out_channels
     inputs = [
         get_tensor_id(x), 
-                append_initializer(_to_oki_weight(self.weight.data, self.in_channels, self.out_channels),
-                           f"spconv{ilayer}.weight"),
+                # 用户权重为 spconv2.x 官方布局 (Cin,Cout,Kz,Ky,Kx)；统一导出为 libspconv 期望的
+        # OKI-like (Cout,K*,...,Cin)。inverse 由 inverse_model 先行反转 K 轴。
+        append_initializer(self.weight.data.permute(1, 2, 3, 4, 0), f"spconv{ilayer}.weight"),
     ]
 
     if self.bias is not None:
@@ -171,8 +154,9 @@ def symbolic_sparse_convolution_quant(self, ilayer, y, x):
     output_size[1] = self.out_channels
     inputs = [
         get_tensor_id(x), 
-                append_initializer(_to_oki_weight(self.weight.data, self.in_channels, self.out_channels),
-                           f"spconv{ilayer}.weight"),
+                # 用户权重为 spconv2.x 官方布局 (Cin,Cout,Kz,Ky,Kx)；统一导出为 libspconv 期望的
+        # OKI-like (Cout,K*,...,Cin)。inverse 由 inverse_model 先行反转 K 轴。
+        append_initializer(self.weight.data.permute(1, 2, 3, 4, 0), f"spconv{ilayer}.weight"),
     ]
 
     if self.bias is not None:
@@ -363,7 +347,8 @@ def inverse_model(model : nn.Module):
     for name, module in model.named_modules():
         if isinstance(module, spconv.conv.SparseConvolution):
             # (xyz) I, O
-            module.weight.data = module.weight.data.permute(2, 1, 0, 3, 4).contiguous()
+            # spconv2.x 布局 (Cin,Cout,Kz,Ky,Kx)：zyx 反转 = Kz<->Kx
+            module.weight.data = module.weight.data.permute(0, 1, 4, 3, 2).contiguous()
             module.padding = module.padding[::-1]
             module.stride = module.stride[::-1]
             module.dilation = module.dilation[::-1]
