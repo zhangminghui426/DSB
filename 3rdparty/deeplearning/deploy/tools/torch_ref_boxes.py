@@ -72,8 +72,8 @@ def main():
     mats = {}
     for k in ["camera2lidar", "camera_intrinsics", "lidar2image", "img_aug_matrix"]:
         a = load_tensor(os.path.join(args.data, k + ".tensor"))
-        mats[k] = torch.from_numpy(a).float().cuda()  # [6,4,4]
-    lidar_aug = torch.eye(4, dtype=torch.float32).cuda().unsqueeze(0).repeat(6, 1, 1)
+        mats[k] = torch.from_numpy(a).float().cuda().unsqueeze(0)  # [1,6,4,4]
+    lidar_aug = torch.eye(4, dtype=torch.float32).cuda().unsqueeze(0).repeat(1, 6, 1, 1)
     # vtransform(BaseDepthTransform) 还需要 ego/相机相对位姿：lidar 系视为 ego 系
     lidar2ego = lidar_aug
     camera2ego = lidar2ego.matmul(mats["camera2lidar"])  # camera->lidar->ego
