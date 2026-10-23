@@ -150,9 +150,9 @@ def backend_torch(cfg, ckpt, dump_dir, sample_index=0):
     # 6. decode 3D 框（torch 训练侧 decode，与 C++ head-transbbox 对比）
     pred_dicts = head([middle], [{}])
     bboxes = head.get_bboxes(pred_dicts, batch["metas"])
-    b = bboxes[0][0].tensor.cpu().numpy()
-    s = bboxes[0][1].cpu().numpy()
-    l = bboxes[0][2].cpu().numpy()
+    b = bboxes[0][0].tensor.detach().cpu().numpy()
+    s = bboxes[0][1].detach().cpu().numpy()
+    l = bboxes[0][2].detach().cpu().numpy()
     print(f"[torch] {len(b)} boxes")
     for i in range(len(b)):
         print("  box[%d] id=%d score=%.3f pos=(%.2f,%.2f,%.2f) size=(%.2f,%.2f,%.2f) rot=%.3f"
