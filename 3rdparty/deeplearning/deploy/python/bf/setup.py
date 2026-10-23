@@ -10,6 +10,20 @@ from setuptools import setup
 from torch.utils.cpp_extension import CUDAExtension, BuildExtension
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+def _nvcc_args():
+    args = ["-O3", "--expt-relaxed-constexpr"]
+    if torch.cuda.is_available():
+        cc = torch.cuda.get_device_capability(0)
+        cc_num = cc[0] * 10 + cc[1]
+        args += [f"-gencode=arch=compute_{cc_num},code=sm_{cc_num}",
+                 f"-gencode=arch=compute_{cc_num},code=compute_{cc_num}"]
+    else:
+        args += ["-gencode=arch=compute_90,code=sm_90",
+                 "-gencode=arch=compute_90,code=compute_90"]
+    return args
+
+
+
 
 setup(
     name="bevfusion_ops",
@@ -18,15 +32,9 @@ setup(
             "bevfusion_ops",
             [os.path.join(SRC, "bevfusion_ops.cu")],
             extra_compile_args={
-                "nvcc": [
-                    "-O3",
-                    "--expt-relaxed-constexpr",
-                    "-gencode=arch=compute_75,code=sm_75",
-                    "-gencode=arch=compute_80,code=sm_80",
-                    "-gencode=arch=compute_86,code=sm_86",
-                    "-gencode=arch=compute_89,code=sm_89",
-                    "-gencode=arch=compute_90,code=sm_90",
-                ],
+                # 按当前 GPU 架构动态生成 gencode（含 PTX 兜底），避免
+                # "no kernel image is available"（如 Blackwell sm_120 不在硬编码列表）
+                "nvcc": _nvcc_args(),
                 "cxx": ["-O3", "-std=c++17"],
             },
         )
