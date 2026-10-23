@@ -77,6 +77,24 @@ def register_node(fn):
         setattr(fn_module, fn_name, internal_forward)
     return make_hook
 
+def _to_oki_weight(w, in_channels, out_channels):
+    """把 conv 权重统一转成 3DSparseConvolution/libspconv 期望的 OKI (Cout, K, D, H, Cin)。
+
+    spconv 各版本 Parameter 布局不同（(Cin,Cout,D,H,K) / (Cout,K,D,H,Cin) /
+    (K,D,H,Cin,Cout) 等），以 in/out_channels 与形状匹配自动识别。
+    """
+    if w.dim() == 5 and w.shape[0] == out_channels and w.shape[-1] == in_channels:
+        return w                                # (Cout, K, D, H, Cin)
+    if w.dim() == 5 and w.shape[1] == out_channels:
+        return w.permute(1, 4, 2, 3, 0)         # (Cin, Cout, D, H, K) -> (Cout, K, D, H, Cin)
+    if w.dim() == 5 and w.shape[-1] == out_channels:
+        return w.permute(4, 0, 1, 2, 3)         # (K, D, H, Cin, Cout) -> (Cout, K, D, H, Cin)
+    if w.dim() == 6:
+        # (Cin, Cout, K, D, H, W) -> (Cout, K, D, H, W, Cin)
+        return w.permute(1, 2, 3, 4, 5, 0)
+    raise RuntimeError(f"cannot normalize conv weight shape {tuple(w.shape)} "
+                       f"in={in_channels} out={out_channels}")
+
 @register_node("spconv.conv.SparseConvolution.forward")
 def symbolic_sparse_convolution(self, ilayer, y, x):
     register_tensor(y)
@@ -97,9 +115,8 @@ def symbolic_sparse_convolution(self, ilayer, y, x):
     output_size[1] = self.out_channels
     inputs = [
         get_tensor_id(x), 
-        # spconv 2.x 权重布局 (Cin, Cout, D, H, K)；3DSparseConvolution/libspconv 期望
-        # (Cout, D, H, K, Cin)（kernel 维保持原序、Cin 移末尾，kernel_size[0]==shape[1]）：
-        append_initializer(self.weight.data.permute(1, 2, 3, 4, 0), f"spconv{ilayer}.weight"),
+                append_initializer(_to_oki_weight(self.weight.data, self.in_channels, self.out_channels),
+                           f"spconv{ilayer}.weight"),
     ]
 
     if self.bias is not None:
@@ -154,9 +171,8 @@ def symbolic_sparse_convolution_quant(self, ilayer, y, x):
     output_size[1] = self.out_channels
     inputs = [
         get_tensor_id(x), 
-        # spconv 2.x 权重布局 (Cin, Cout, D, H, K)；3DSparseConvolution/libspconv 期望
-        # (Cout, D, H, K, Cin)（kernel 维保持原序、Cin 移末尾，kernel_size[0]==shape[1]）：
-        append_initializer(self.weight.data.permute(1, 2, 3, 4, 0), f"spconv{ilayer}.weight"),
+                append_initializer(_to_oki_weight(self.weight.data, self.in_channels, self.out_channels),
+                           f"spconv{ilayer}.weight"),
     ]
 
     if self.bias is not None:
