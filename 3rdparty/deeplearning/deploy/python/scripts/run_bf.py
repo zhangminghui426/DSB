@@ -21,7 +21,7 @@ sys.path.insert(0, osp.dirname(_ROOT))  # deeplearning/
 from deploy.python.bf import BevfusionBf  # noqa: E402
 
 FILES = ["camera2lidar", "camera_intrinsics", "lidar2image", "img_aug_matrix", "points"]
-JPG_NAMES = ["0-FRONT", "1-FRONT_RIGHT", "2-FRONT_LEFT", "3-BACK_RIGHT", "4-BACK", "5-BACK_LEFT"]
+JPG_NAMES = ["0-FRONT", "1-FRONT_RIGHT", "2-FRONT_LEFT", "3-BACK", "4-BACK_LEFT", "5-BACK_RIGHT"]
 
 
 def load_tensor(path, dtype=np.float32):
