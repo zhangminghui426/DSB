@@ -264,6 +264,15 @@ int main(int argc, char** argv) {
     core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0), stream);
   }
 
+  // print decoded 3d bboxes for ground-truth check
+  printf("[main] %zu bboxes\n", bboxes.size());
+  for (size_t i = 0; i < bboxes.size(); ++i) {
+    auto& b = bboxes[i];
+    printf("  box[%zu] id=%d score=%.3f pos=(%.2f,%.2f,%.2f) size=(%.2f,%.2f,%.2f) rot=%.3f vel=(%.2f,%.2f)\n",
+           i, b.id, b.score, b.position.x, b.position.y, b.position.z,
+           b.size.w, b.size.l, b.size.h, b.z_rotation, b.velocity.vx, b.velocity.vy);
+  }
+
   // visualize and save to jpg
   visualize(bboxes, lidar_points, images, lidar2image, "build/cuda-bevfusion.jpg", stream);
 
