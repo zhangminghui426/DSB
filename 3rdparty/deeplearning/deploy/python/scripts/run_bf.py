@@ -24,9 +24,22 @@ FILES = ["camera2lidar", "camera_intrinsics", "lidar2image", "img_aug_matrix", "
 JPG_NAMES = ["0-FRONT", "1-FRONT_RIGHT", "2-FRONT_LEFT", "3-BACK", "4-BACK_LEFT", "5-BACK_RIGHT"]
 
 
-def load_tensor(path, dtype=np.float32):
+def load_tensor(path, dtype=None):
+    """读取 CUDA-BEVFusion nv::Tensor 序列化：head[3](magic,ndim,dtypei) + dims + raw。
+
+    与 deploy/cpp/src/common/tensor.cu 的 Tensor::load 对齐；dtype 由文件头决定，
+    不再整体 frombuffer（否则会把 header 也读进数据）。
+    """
     with open(path, "rb") as f:
-        return np.frombuffer(f.read(), dtype=dtype)
+        head = np.fromfile(f, dtype="<i4", count=3)
+        assert head[0] == 0x33FF1101, f"{path}: 非 nv::Tensor 文件 (magic={head[0]:#010x})"
+        ndim, dtypei = int(head[1]), int(head[2])
+        dims = tuple(int(x) for x in np.fromfile(f, dtype="<i4", count=ndim))
+        if dtype is None:
+            dtype = {2: np.float16, 3: np.float32, 1: np.int32,
+                     8: np.uint8, 4: np.int64}.get(dtypei, np.float32)
+        data = np.fromfile(f, dtype=dtype)
+    return data.reshape(dims)
 
 
 def main():
@@ -44,7 +57,7 @@ def main():
     imgs = np.stack([cv2.imread(osp.join(data_dir, f"{n}.jpg"))[:, :, ::-1] for n in JPG_NAMES])
     mats = {k: load_tensor(osp.join(data_dir, f"{k}.tensor")).reshape(6, 4, 4) for k in
             ["camera2lidar", "camera_intrinsics", "lidar2image", "img_aug_matrix"]}
-    points = load_tensor(osp.join(data_dir, "points.tensor"), np.float16)
+    points = load_tensor(osp.join(data_dir, "points.tensor"))  # dtype 按文件头
 
     infer = BevfusionBf(args.config, args.ckpt, args.model)
     boxes = infer.forward(imgs, points, mats["camera2lidar"], mats["camera_intrinsics"],
