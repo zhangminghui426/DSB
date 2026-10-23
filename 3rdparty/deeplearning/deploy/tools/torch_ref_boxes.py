@@ -74,12 +74,19 @@ def main():
         a = load_tensor(os.path.join(args.data, k + ".tensor"))
         mats[k] = torch.from_numpy(a).float().cuda()  # [6,4,4]
     lidar_aug = torch.eye(4, dtype=torch.float32).cuda().unsqueeze(0).repeat(6, 1, 1)
+    # vtransform(BaseDepthTransform) 还需要 ego/相机相对位姿：lidar 系视为 ego 系
+    lidar2ego = lidar_aug
+    camera2ego = lidar2ego.matmul(mats["camera2lidar"])  # camera->lidar->ego
+    lidar2camera = torch.inverse(mats["camera2lidar"])  # lidar->camera
 
     metas = [{"box_type_3d": LiDARInstance3DBoxes}]
 
     with torch.no_grad():
         out = model.forward(
             img=img, points=points, radar=None,
+            camera2ego=camera2ego,
+            lidar2ego=lidar2ego,
+            lidar2camera=lidar2camera,
             lidar2image=mats["lidar2image"],
             camera_intrinsics=mats["camera_intrinsics"],
             camera2lidar=mats["camera2lidar"],
