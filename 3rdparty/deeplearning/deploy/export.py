@@ -1,16 +1,10 @@
 """Split-module ONNX export + trtexec engine build for BEVFusion det / seg.
 
 【部署前置步骤】Python 与 C++ 推理共用：导出分模块 ONNX -> trtexec 构建
-TRT engine。Python 侧直接以 engine 推理（deploy/python/scripts/pipeline.py），
-C++ 侧另用 deploy/tools/export_cpp_input.py 从 val 样本导出输入文件。
+TRT engine。部署只走 C++（deploy/cpp/）；本脚本与 export_bf.py 负责导出。
 
 Follows the CUDA-BEVFusion (NVIDIA-AI-IOT/Lidar_AI_Solution) module split so
-every exported graph is dense and TRT-parseable without custom plugins. The
-runtime split (deploy.python/scripts/pipeline.py + deploy.python.builder) keeps the
-custom-CUDA-op parts on torch/CUDA: camera geometry + bev_pool +
-vtransform downsample (deploy.python.bev_pool_torch), lidar voxelization +
-sparse encoder (deploy.python.inference.sparse_encoder_forward), box decode
-(models.heads.transfusion).
+every exported graph is dense and TRT-parseable without custom plugins.
 
 ONNX export is immediately followed by the trtexec engine build for every
 graph (skip with --onnx-only). trtexec lookup: $TRTEXEC env, then PATH.
@@ -32,10 +26,9 @@ import numpy as np
 import torch
 from torch import nn
 
-from datasets import build_dataset, collate_fn
 from models import build_model
 from scripts.config import load_config
-from scripts.trainer import load_model_checkpoint, to_device
+from scripts.trainer import load_model_checkpoint
 
 from deploy.python.graphs import DET_HEAD_KEYS, GRAPH_IO
 
@@ -182,38 +175,33 @@ def _bn_restore(model, state):
 
 
 def _sample_inputs(cfg, model, task):
-    """One real val sample -> example tensors for every graph."""
-    from deploy.python.bev_pool_torch import camera_bev_from_depthnet
-    from deploy.python.inference import sparse_encoder_forward
-    from deploy.python.preprocess import Preprocessor, project_depth
+    """合成输入（Python 部署已移除；verify 仅做导出数值对拍）。
 
-    ds = build_dataset(cfg.data.val)
-    sample = ds[0]
-    batch = to_device(collate_fn([sample]), "cuda")
-    img = batch["img"]
-
-    # keep points on the model device so fuser can cat cam/lidar BEVs
-    pre = Preprocessor(model)
-    vfeats, vcoords, vsizes = pre.voxelize(batch["points"][0])
-    lidar_bev = sparse_encoder_forward(model, vfeats, vcoords, vsizes)
-
+    全部使用固定形状的随机/单位张量：verify 只对比 onnx 与 torch 在
+    同一输入下的输出相对差，不要求真实样本（不再依赖 deploy.python 推理）。
+    """
+    dev, dt = "cuda", torch.float16
+    img = torch.randn(1, 6, 3, 256, 704, device=dev, dtype=dt)
     with torch.no_grad():
         feats = CamBackbone(model)(img)
         if task == "det":
-            depth = to_device(
-                project_depth(batch["points"][0].cpu(),
-                              batch["lidar2image"][0].cpu(),
-                              batch["img_aug_matrix"][0].cpu().float(),
-                              batch["lidar_aug_matrix"][0].cpu().float()),
-                "cuda").unsqueeze(0)
+            depth = torch.rand(1, 6, 1, 256, 704, device=dev, dtype=dt)
             depthnet = CamVtransformDet(model)(feats, depth)
         else:
             depth = None
             depthnet = CamVtransformSeg(model)(feats)
-        cam_bev = camera_bev_from_depthnet(model, batch, depthnet, task)
+        eye4 = torch.eye(4, device=dev, dtype=torch.float32)
+        batch = {
+            "camera2lidar": eye4.unsqueeze(0).repeat(6, 1, 1),
+            "camera_intrinsics": eye4.unsqueeze(0).repeat(6, 1, 1),
+            "img_aug_matrix": eye4.unsqueeze(0).repeat(6, 1, 1),
+            "lidar_aug_matrix": eye4.unsqueeze(0).repeat(6, 1, 1),
+        }
+        cam_bev = torch.randn(1, 80, 360, 360, device=dev, dtype=dt)
+        lidar_bev = torch.randn(1, 256, 180, 180, device=dev, dtype=dt)
         decoder_feat = FuserDecoder(model)(cam_bev, lidar_bev)
 
-    return dict(batch=batch, sample=sample, img=img, feats=feats, depth=depth,
+    return dict(batch=batch, sample=None, img=img, feats=feats, depth=depth,
                 depthnet=depthnet, cam_bev=cam_bev, lidar_bev=lidar_bev,
                 decoder_feat=decoder_feat)
 

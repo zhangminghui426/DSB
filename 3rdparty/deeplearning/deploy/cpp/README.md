@@ -68,7 +68,7 @@ FindCUDA），sm80/86/89/90 四档 gencode，兼容 cmake 3.22+。
 
 ## 模型导出与布局
 
-engine 构建见 [../python/README.md](../python/README.md)（deploy/export_bf.py）。main.cpp 按以下
+engine 构建见 [../README.md](../README.md)（deploy/export_bf.py + build_trt_engine.sh）。main.cpp 按以下
 布局读取（model/<name>/ 由运行时参数指定）：
 
 model/<name>/build/camera.backbone.plan
@@ -87,7 +87,7 @@ cp outputs/onnx_bf/lidar.backbone.xyz.onnx model/resnet50/
 ```
 
 （4 个 .plan 由 deploy/build_trt_engine.sh 直接输出到 model/resnet50/build/，
-见 [../python/README.md#engine-构建cuda-bevfusion-原版脚本](../python/README.md#engine-构建cuda-bevfusion-原版脚本)）
+见 [../README.md#使用流程](../README.md#使用流程)）
 
 ## 数据（example-data）
 

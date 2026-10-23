@@ -1,45 +1,43 @@
 # TRT 部署（deploy/）
 
 C++ 推理完全移植 NVIDIA CUDA-BEVFusion（deploy/cpp/），不再区分预处理/推理/后处理三层，
-直接采用参考实现 src/bevfusion/ 平铺结构。Python 侧负责模型导出（deploy/export_bf.py），
-按 CUDA-BEVFusion 模型结构导出 5 个 onnx 并构建 engine。
+直接采用参考实现 src/bevfusion/ 平铺结构。部署只走 C++；Python 侧仅负责模型导出
+（deploy/export_bf.py，按 CUDA-BEVFusion 模型结构导出 5 个 onnx）与 engine 构建前置。
 
 ## 目录结构
 
 ```
 deploy/
 ├── README.md           # 本文件（部署总览）
-├── build_trt_engine.sh # engine 构建脚本（CUDA-BEVFusion 原版，Python/C++ 共用，
-│                       #   --fp16 + IO fp16:chw，输出 model/<name>/build/*.plan）
+├── build_trt_engine.sh # engine 构建脚本（CUDA-BEVFusion 原版，trtexec --fp16 + IO fp16:chw，
+│                       #   输出 model/<name>/build/*.plan）
 ├── export_bf.py        # CUDA-BEVFusion 结构 ONNX 导出（5 个 onnx + verify）
-├── python/             # Python 导出/校验库 + bf 推理包
-│   ├── README.md       # Python 侧说明
-│   ├── bf/             # bf：CUDA-BEVFusion 结构 Python 部署
-│   │   │               #   （.plan 加载 + 自定义 CUDA 算子 + spconv，见 bf/README.md）
-│   │   ├── setup.py    #   编译 bevfusion_ops 自定义算子
-│   │   ├── src/bevfusion_ops.cu  #   depth/geometry/bevpool/voxelize kernel
-│   │   ├── runtime.py  #   .plan 加载与执行
-│   │   ├── cuda_ops.py #   算子封装
-│   │   ├── sparse.py   #   spconv.pytorch 稀疏编码器
-│   │   └── infer.py    #   推理编排 + head decode
-│   ├── lean/           # NVIDIA qat/lean 移植（SCN onnx 导出）
-│   │   ├── exptool.py  #   SparseConvolution 符号 trace / onnx 图构建
-│   │   ├── funcs.py    #   BN 融合 / ReLU 融合 / 权重加载
-│   │   ├── tensor.py   #   tensor 文件格式（magic 0x33ff1101）
-│   │   └── quantize.py #   PTQ 量化接口（非量化模型跳过）
-│   └── (scripts/pipeline 等历史保留)
+├── export.py           # 分模块 ONNX 导出库（export_bf.py 复用其 helper）
+├── python/             # 导出链依赖的 tensor 名常量（graphs），无推理代码
+├── lean/               # SCN onnx 导出库（符号 trace / BN 融合 / inverse 支持）
 ├── cpp/                # C++ 推理（CUDA-BEVFusion 完整移植，见 cpp/README.md）
 ├── tools/
 │   ├── export_example_data.py  # 生成 example-data（6 jpg + .tensor）
 │   └── export_cpp_input.py     # 旧输入导出（历史保留）
-└── launch/             # 旧启动脚本（历史保留，新流程不依赖）
+└── launch/             # export.sh（ONNX -> engine 旧入口，可不用）
 ```
 
 ## 使用流程
 
-1. 导出模型 onnx（Python）：[python/README.md](python/README.md)
-2. 构建 engine（CUDA-BEVFusion 原版脚本 build_trt_engine.sh）：[python/README.md#engine-构建cuda-bevfusion-原版脚本](python/README.md#engine-构建cuda-bevfusion-原版脚本)
-3. 按 main.cpp 布局放置模型：[cpp/README.md#模型布局](cpp/README.md#模型布局)
+1. 导出模型 onnx（Python，5 个 onnx → outputs/onnx_bf/）：
+   ```bash
+   cd 3rdparty/deeplearning
+   python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx_bf
+   ```
+2. 构建 engine（build_trt_engine.sh，输出 model/<name>/build/）：
+   ```bash
+   cd 3rdparty/deeplearning
+   mkdir -p model/resnet50/build
+   cp outputs/onnx_bf/camera.backbone.onnx outputs/onnx_bf/camera.vtransform.onnx outputs/onnx_bf/fuser.onnx outputs/onnx_bf/head.bbox.onnx model/resnet50/
+   cp outputs/onnx_bf/lidar.backbone.xyz.onnx model/resnet50/
+   DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
+   ```
+3. 按 main.cpp 布局放置模型：[cpp/README.md#模型导出与布局](cpp/README.md#模型导出与布局)
 4. 生成 example-data 输入：[cpp/README.md#数据example-data](cpp/README.md#数据example-data)
 5. 构建并运行 C++ 推理：[cpp/README.md](cpp/README.md)
 
@@ -51,8 +49,8 @@ deploy/
   - fuser.onnx：camera+lidar → middle(1,512,180,180)
   - head.bbox.onnx：middle → score/rot/dim/reg/height/vel
   - lidar.backbone.xyz.onnx：稀疏编码器（libspconv 运行时解析，不走 TRT）
-- deploy/cpp/model/<name>/build/：4 个 .plan（camera.backbone / camera.vtransform /
-  fuser / head.bbox，由 build_trt_engine.sh 构建，--fp16 + IO fp16:chw）
+- model/<name>/build/：4 个 .plan（camera.backbone / camera.vtransform / fuser /
+  head.bbox，--fp16 + IO fp16:chw）
 
 ## 自定义算子归属
 
