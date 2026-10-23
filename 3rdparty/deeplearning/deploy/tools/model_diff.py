@@ -94,7 +94,7 @@ def backend_torch(cfg, ckpt, dump_dir, sample_index=0):
     vt = model.encoders["camera"]["vtransform"]
     img = batch["img"]
     B, N, C, H, W = img.shape
-    half = lambda t: t.detach().cpu().half().numpy()
+    half = lambda t: t.detach().cpu().numpy()  # fp32 dump（onnx 输入 float32）
 
     # 1. depth 投影 + camera.backbone（feature HWC + depth_weights）
     depth = project_depth(batch, vt)
@@ -163,6 +163,9 @@ def backend_torch(cfg, ckpt, dump_dir, sample_index=0):
             f.write("box[%d] id=%d score=%.3f pos=(%.2f,%.2f,%.2f) size=(%.2f,%.2f,%.2f) rot=%.3f\n"
                     % (i, int(l[i]), s[i], b[i, 0], b[i, 1], b[i, 2],
                        b[i, 3], b[i, 4], b[i, 5], b[i, 6]))
+    dump("query_labels", head.query_labels.detach().cpu().numpy(), dump_dir, "torch")
+    dump("boxes", np.concatenate([b, s[:, None], l[:, None]], axis=1), dump_dir, "torch")  # [N,11]
+    return model
 
 
 # ---------------------------------------------------------------- onnx 后端
@@ -188,7 +191,7 @@ def backend_onnx(onnx_dir, dump_dir):
             continue
         sess = ort.InferenceSession(path, providers=providers)
         in_names = {i.name for i in sess.get_inputs()}
-        feed = {k: load_dump(v, dump_dir).astype(np.float16) for k, v in feed_map.items()}
+        feed = {k: load_dump(v, dump_dir).astype(np.float32) for k, v in feed_map.items()}
         res = sess.run(None, feed)
         names = [o.name for o in sess.get_outputs()]
         print(f"[onnx] {graph} in={list(feed)} out={names}")
@@ -197,7 +200,7 @@ def backend_onnx(onnx_dir, dump_dir):
             # 按 onnx 输出名->我们命名约定（部分图输出顺序即约定顺序）
         for j, arr in enumerate(res):
             key = outs[graph][j] if j < len(outs[graph]) else names[j]
-            dump(key, arr, dump_dir, "onnx")
+            dump(key, np.asarray(arr).astype(np.float32), dump_dir, "onnx")
 
 
 # ---------------------------------------------------------------- trt 后端
@@ -213,7 +216,7 @@ def _trt_session(engine_dir, graph):
     return ctx, in_names, out_names
 
 
-def backend_trt(engine_dir, dump_dir):
+def backend_trt(engine_dir, dump_dir, model=None):
     import tensorrt as trt
     graphs = ["camera.backbone", "camera.vtransform", "fuser", "head.bbox"]
     feed_map = {
@@ -258,6 +261,122 @@ def backend_trt(engine_dir, dump_dir):
             key = out_map[graph][j] if j < len(out_map[graph]) else name
             dump(key, buffers[name].cpu().numpy(), dump_dir, "trt")
 
+    # decode：trt head 输出 + torch bbox_coder（filter=False + score>0.12 对齐 C++）
+    if model is not None and os.path.exists(os.path.join(dump_dir, "trt", "score.npy")):
+        head = model.heads["object"]
+        ts = lambda k: torch.from_numpy(load_dump(k, dump_dir, "trt")).float().cuda()
+        preds = head.bbox_coder.decode(ts("score"), ts("rot"), ts("dim"), ts("reg"),
+                                       ts("height"), ts("vel"), filter=False)
+        boxes = preds[0]["bboxes"].detach().cpu().numpy()
+        sc = preds[0]["scores"].detach().cpu().numpy()
+        lb = preds[0]["labels"].detach().cpu().numpy()
+        mask = sc > 0.12
+        boxes, sc, lb = boxes[mask], sc[mask], lb[mask]
+        dump("boxes", np.concatenate([boxes, sc[:, None], lb[:, None]], axis=1), dump_dir, "trt")
+        print(f"[trt] {len(sc)} boxes (score>0.12)")
+        for i in range(len(sc)):
+            print("  box[%d] id=%d score=%.3f pos=(%.2f,%.2f,%.2f) size=(%.2f,%.2f,%.2f) rot=%.3f"
+                  % (i, int(lb[i]), sc[i], boxes[i, 0], boxes[i, 1], boxes[i, 2],
+                     boxes[i, 3], boxes[i, 4], boxes[i, 5], boxes[i, 6]))
+
+
+# ---------------------------------------------------------------- 可视化对比
+CAM_NAMES = ["FRONT", "FRONT_RIGHT", "FRONT_LEFT", "BACK", "BACK_LEFT", "BACK_RIGHT"]
+
+
+def _box_corners(box):
+    x, y, z, w, l, h, rot = box[:7]
+    c, s = np.cos(rot), np.sin(rot)
+    R = np.array([[c, -s], [s, c]])
+    base = np.array([[w / 2, l / 2], [w / 2, -l / 2], [-w / 2, -l / 2], [-w / 2, l / 2]])
+    base = base @ R.T + np.array([x, y])
+    corners = np.zeros((8, 3))
+    corners[:4, :2], corners[:4, 2] = base, z
+    corners[4:, :2], corners[4:, 2] = base, z + h
+    return corners
+
+
+def _parse_cpp_boxes(path):
+    import re
+    boxes = []
+    for line in open(path):
+        m = re.search(
+            r"id=(\d+) score=([-\d.]+) pos=\(([-\d.]+),([-\d.]+),([-\d.]+)\) "
+            r"size=\(([-\d.]+),([-\d.]+),([-\d.]+)\) rot=([-\d.]+)", line)
+        if m:
+            g = m.groups()
+            boxes.append([float(g[2]), float(g[3]), float(g[4]),
+                          float(g[5]), float(g[6]), float(g[7]),
+                          float(g[8]), float(g[1]), float(g[0])])
+    return np.array(boxes, dtype=np.float32)
+
+
+def backend_vis(dump_dir, data_dir, cpp_boxes_txt=None):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import cv2
+
+    sets = []
+    for sub, color, label in [("torch", "limegreen", "torch"),
+                              ("trt", "red", "trt")]:
+        p = os.path.join(dump_dir, sub, "boxes.npy")
+        if os.path.exists(p):
+            sets.append((np.load(p), color, label))
+    if cpp_boxes_txt and os.path.exists(cpp_boxes_txt):
+        sets.append((_parse_cpp_boxes(cpp_boxes_txt), "blue", "cpp"))
+
+    l2i = load_tensor(os.path.join(data_dir, "lidar2image.tensor"))
+    pts = load_tensor(os.path.join(data_dir, "points.tensor"))
+
+    fig, axes = plt.subplots(3, 3, figsize=(26, 15))
+    ax = axes[0][0]
+    if pts.ndim >= 2 and pts.shape[1] >= 3:
+        sel = pts[::5, :3]
+        ax.scatter(sel[:, 0], -sel[:, 1], s=0.3, c="lightgray", alpha=0.4)
+    for arr, color, label in sets:
+        for b in arr:
+            x, y, z, w, l, h, rot = b[:7]
+            c, s = np.cos(rot), np.sin(rot)
+            R = np.array([[c, -s], [s, c]])
+            rect = np.array([[-w / 2, -l / 2], [w / 2, -l / 2], [w / 2, l / 2],
+                             [-w / 2, l / 2], [-w / 2, -l / 2]]) @ R.T
+            rect += np.array([x, y])
+            ax.plot(rect[:, 0], -rect[:, 1], color=color, lw=1.2)
+    ax.set_xlim(-54, 54); ax.set_ylim(-54, 54); ax.set_aspect("equal")
+    ax.set_title("BEV（torch 绿 / trt 红 / cpp 蓝）")
+    ax.grid(True, alpha=0.3)
+
+    cam_axes = [axes[0][1], axes[0][2], axes[1][0], axes[1][1], axes[1][2], axes[2][0]]
+    for c, axc in enumerate(cam_axes):
+        img = cv2.imread(os.path.join(data_dir, f"{c}-{CAM_NAMES[c]}.jpg"))
+        if img is None:
+            continue
+        img = img[:, :, ::-1]
+        axc.imshow(img)
+        for arr, color, label in sets:
+            for b in arr:
+                cor = _box_corners(b)
+                h = np.concatenate([cor, np.ones((8, 1))], axis=1)
+                uv = h @ l2i[c].T
+                u = uv[:, 0] / uv[:, 2]; v = uv[:, 1] / uv[:, 2]
+                edges = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6),
+                         (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]
+                for e in edges:
+                    axc.plot([u[e[0]], u[e[1]]], [v[e[0]], v[e[1]]], color=color, lw=1)
+        axc.set_title(CAM_NAMES[c]); axc.axis("off")
+
+    axes[2][1].axis("off")
+    axl = axes[2][2]
+    axl.axis("off")
+    for arr, color, label in sets:
+        axl.plot([], [], color=color, lw=2, label=f"{label} ({len(arr)})")
+    axl.legend(loc="center", fontsize=14)
+
+    out = os.path.join(dump_dir, "vis_compare.jpg")
+    plt.savefig(out, dpi=100, bbox_inches="tight")
+    print(f"[vis] saved {out}")
+
 
 # ---------------------------------------------------------------- diff
 def _stats(a, b, name):
@@ -300,22 +419,36 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("config", nargs="?")
     ap.add_argument("ckpt", nargs="?")
-    ap.add_argument("--backend", default="all", choices=["torch", "onnx", "trt", "diff", "all"])
+    ap.add_argument("--backend", default="all", choices=["torch", "onnx", "trt", "diff", "vis", "all"])
     ap.add_argument("--onnx-dir", default="outputs/onnx_bf")
     ap.add_argument("--engine-dir", default="deploy/cpp/model/resnet50/build")
     ap.add_argument("--dump-dir", default="outputs/model_diff")
     ap.add_argument("--sample-index", type=int, default=0)
+    ap.add_argument("--data-dir", default="outputs/example-data")
+    ap.add_argument("--cpp-boxes", default=None,
+                    help="C++ 打印的 bboxes 文本文件（vis 叠加第三色）")
     args = ap.parse_args()
 
+    model = None
     if args.backend in ("torch", "all"):
         assert args.config and args.ckpt, "torch 后端需要 config + ckpt"
-        backend_torch(args.config, args.ckpt, args.dump_dir, args.sample_index)
+        model = backend_torch(args.config, args.ckpt, args.dump_dir, args.sample_index)
     if args.backend in ("onnx", "all"):
         backend_onnx(args.onnx_dir, args.dump_dir)
     if args.backend in ("trt", "all"):
-        backend_trt(args.engine_dir, args.dump_dir)
+        backend_trt(args.engine_dir, args.dump_dir, model)
     if args.backend in ("diff", "all"):
         backend_diff(args.dump_dir)
+    if args.backend in ("vis", "all"):
+        if model is None and args.backend == "vis":
+            assert args.config and args.ckpt, "vis 需要 model（config + ckpt）"
+            from scripts.config import load_config
+            from models import build_model
+            from scripts.trainer import load_model_checkpoint
+            cfg = load_config(args.config)
+            model = build_model(cfg.model).cuda().eval()
+            load_model_checkpoint(model, args.ckpt, strict=True)
+        backend_vis(args.dump_dir, args.data_dir, args.cpp_boxes)
 
 
 if __name__ == "__main__":
