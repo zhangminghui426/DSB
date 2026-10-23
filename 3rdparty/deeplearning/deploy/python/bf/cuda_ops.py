@@ -164,7 +164,8 @@ def voxelize(points: torch.Tensor, min_range, voxel_size, grid_size,
     features = _ops.voxel_mean(points.contiguous().half(), sel_points.contiguous().to(torch.int32),
                                bucket_id.contiguous().to(torch.int32), num_buckets)
     counts = torch.zeros((num_buckets,), dtype=torch.int32, device=points.device)
-    counts.scatter_add_(0, bucket_id, torch.ones_like(bucket_id))
+    # ones_like 必须与 counts 同 dtype（bucket_id 为 int64，src 需 int32）
+    counts.scatter_add_(0, bucket_id, torch.ones_like(bucket_id, dtype=counts.dtype))
     features = features / counts.clamp(min=1).float().unsqueeze(1)
 
     # coors [b, z, y, x]
