@@ -13,7 +13,9 @@ import os
 import torch
 
 try:
-    import bevfusion_ops as _ops
+    # .so 由 setup.py build_ext --inplace 生成在 bf/ 包目录内，必须包内相对导入
+    # （顶层 import 会因 bf/ 不在 sys.path 而失败）
+    from . import bevfusion_ops as _ops
 except ImportError as e:  # 未编译时给出明确指引
     raise ImportError(
         "bf 自定义 CUDA 算子未编译：cd 3rdparty/deeplearning/deploy/python/bf && "
