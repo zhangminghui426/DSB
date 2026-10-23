@@ -37,8 +37,6 @@ from models import build_model
 from scripts.config import load_config
 from scripts.trainer import load_model_checkpoint, to_device
 
-from deploy.python.builder import EngineBuilder
-from deploy.python.config import DeployConfig
 from deploy.python.graphs import DET_HEAD_KEYS, GRAPH_IO
 
 
@@ -328,14 +326,10 @@ def main():
                          opset=args.opset).run(cfg, verify=args.verify)
 
     if not args.onnx_only:
-        # ONNX -> engine for every graph, via the trtexec CLI (deploy.builder).
-        bcfg = DeployConfig(task=args.task, onnx_dir=args.outdir,
-                            engine_dir=args.engine_dir, fp16=args.fp16,
-                            autocast_fp16=args.autocast_fp16)
-        EngineBuilder().build_all(bcfg)
-        engines = {k: osp.join(args.engine_dir, f"{k}.engine")
-                   for k in GRAPH_IO[args.task]}
-        print("[export] engines:", engines)
+        # engine 构建统一走 CUDA-BEVFusion 原版脚本（--fp16 + IO fp16:chw）：
+        print("[export] engine 构建（deploy/build_trt_engine.sh，Python/C++ 共用）：")
+        print("  cd 3rdparty/deeplearning && DEBUG_MODEL=<name> DEBUG_PRECISION=fp16 "
+              "bash deploy/build_trt_engine.sh")
 
 
 if __name__ == "__main__":
