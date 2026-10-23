@@ -57,8 +57,10 @@ class BackboneImplement : public Backbone {
     volumn = std::accumulate(feature_dims_.begin(), feature_dims_.end(), 1, std::multiplies<int32_t>());
     checkRuntime(cudaMalloc(&feature_, volumn * sizeof(nvtype::half)));
 
-    // N C D H W
-    camera_shape_ = {feature_dims_[0], feature_dims_[3], depth_dims_[1], feature_dims_[1], feature_dims_[2]};
+    // camera_shape_ = (num_cam, C, D, H, W)
+    // feature_dims_ = (N, num_cam, H, W, C)   e.g. [1, 6, 32, 88, 80]
+    // depth_dims_   = (N, num_cam, D, H, W)   e.g. [1, 6, 118, 32, 88]
+    camera_shape_ = {feature_dims_[1], feature_dims_[4], depth_dims_[2], feature_dims_[2], feature_dims_[3]};
     return true;
   }
 
