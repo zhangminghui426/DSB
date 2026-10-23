@@ -97,7 +97,9 @@ def symbolic_sparse_convolution(self, ilayer, y, x):
     output_size[1] = self.out_channels
     inputs = [
         get_tensor_id(x), 
-        append_initializer(self.weight.data.permute(4, 0, 1, 2, 3), f"spconv{ilayer}.weight"),
+        # spconv 2.x 权重布局 (Cin, Cout, D, H, K)；3DSparseConvolution/libspconv 期望
+        # (Cout, D, H, K, Cin)（kernel 维保持原序、Cin 移末尾，kernel_size[0]==shape[1]）：
+        append_initializer(self.weight.data.permute(1, 2, 3, 4, 0), f"spconv{ilayer}.weight"),
     ]
 
     if self.bias is not None:
@@ -152,7 +154,9 @@ def symbolic_sparse_convolution_quant(self, ilayer, y, x):
     output_size[1] = self.out_channels
     inputs = [
         get_tensor_id(x), 
-        append_initializer(self.weight.data.permute(4, 0, 1, 2, 3), f"spconv{ilayer}.weight"),
+        # spconv 2.x 权重布局 (Cin, Cout, D, H, K)；3DSparseConvolution/libspconv 期望
+        # (Cout, D, H, K, Cin)（kernel 维保持原序、Cin 移末尾，kernel_size[0]==shape[1]）：
+        append_initializer(self.weight.data.permute(1, 2, 3, 4, 0), f"spconv{ilayer}.weight"),
     ]
 
     if self.bias is not None:
