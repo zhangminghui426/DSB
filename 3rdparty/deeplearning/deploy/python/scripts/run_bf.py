@@ -14,8 +14,9 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))  # deploy/
-sys.path.insert(0, osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))))  # deeplearning/
+_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))  # deploy/
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, osp.dirname(_ROOT))  # deeplearning/
 
 from deploy.python.bf import BevfusionBf  # noqa: E402
 
