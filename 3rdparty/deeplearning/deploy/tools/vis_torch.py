@@ -121,7 +121,7 @@ def main():
             # 叠加图：torch 类色 + C++ 洋红
             if len(ti):
                 allb = np.concatenate([tbc[:, :9], cbc[:, :9]], axis=0)
-                allc = tcolors + [[255, 0, 255] for _ in range(len(cbc))]
+                allc = tcolors + ["#ff00ff" for _ in range(len(cbc))]
                 alll = tlabels + [f"cpp {DET_CLASSES[int(cbc[i, 8])]} {cbc[i, 7]:.2f}"
                                   for i in range(len(cbc))]
                 _render(allb, allc, alll, pts, l2i, data_dir,
