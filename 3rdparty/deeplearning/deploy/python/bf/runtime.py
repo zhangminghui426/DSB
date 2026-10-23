@@ -55,7 +55,11 @@ class TrtEngine:
         stream = torch.cuda.current_stream().cuda_stream
         for name, t in buffers.items():
             self.context.set_tensor_address(name, t.data_ptr())
-        ok = self.context.execute_async_v2(stream)
+        # TRT 10.x 用 execute_async_v3（配合 set_tensor_address），旧版回退 v2
+        if hasattr(self.context, "execute_async_v3"):
+            ok = self.context.execute_async_v3(stream)
+        else:
+            ok = self.context.execute_async_v2(stream)
         assert ok, f"engine execute failed: {self.plan_path}"
         return {name: buffers[name] for name in self.outputs}
 
