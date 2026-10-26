@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# usage: launch/eval.sh <det|seg|multitask|occ|m0|stereo|stbase> [checkpoint] [extra args...]
+# usage: eval.sh <det|seg|multitask|occ|m0|stereo|stbase> [checkpoint] [extra args...]
 set -e
-cd "$(dirname "$0")/.."
-source launch/env.sh
+cd "$(dirname "$0")"
+source ./env.sh
 TASK="${1:?task: det|seg|multitask|occ|m0|stereo|stbase}"; shift || true
 case "$TASK" in
   det)       CFG=configs/det_convfuser.py;                      CKPT=ckpts/bevfusion-det-bf.pth;      METRIC=bbox ;;

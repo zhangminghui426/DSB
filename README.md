@@ -11,7 +11,7 @@ DSB/
 ├── 3rdparty/
 │   ├── deeplearning/        # 深度学习模型库
 │   │   ├── models/          # BEVFusion/FlashOCC 模型 + SECOND 标定板检测器
-│   │   ├── datasets/ scripts/ configs/ ops/ tools/ tests/ launch/
+│   │   ├── datasets/ scripts/ configs/ ops/ tools/ tests/ *.sh
 │   │   └── deploy/          # TRT 推理部署（torch/onnx/trt 三阶段）
 │   │       ├── scripts/     # export.py（ONNX 导出）/ example_data.py（输入）/ model_diff.py（对拍）
 │   │       ├── src/         # C++ 推理（CUDA-BEVFusion 移植）
@@ -59,14 +59,14 @@ python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.
 
 # 2) 拷贝 ONNX 到 deploy/model/resnet50/ 并构建 TRT engine
 #    （head.bbox 自动用 fp32 层构建为 head.bbox.fp32.plan）
-DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
+DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/export_trt.sh
 
 # 3) 生成 C++ 输入（6 相机 jpg + 矩阵/点云 tensor）
 python deploy/scripts/example_data.py configs/det_convfuser.py \
     ckpts/bevfusion-det-bf.pth --sample-index 0
 
 # 4) C++ 推理（输出解码框 + build/cuda-bevfusion.jpg）
-cd deploy && bash trt.sh
+cd deploy && bash run_trt.sh
 ```
 
 ```bash

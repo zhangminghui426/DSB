@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # usage: deploy/export.sh <det|seg> [checkpoint] [extra args...]
 # onnx 阶段导出：5 张分模块图 -> ONNX（含 SCN）。
-# TRT engine 用 deploy/build_trt_engine.sh；推理输入用 deploy/scripts/example_data.py。
+# TRT engine 用 deploy/export_trt.sh；推理输入用 deploy/scripts/example_data.py。
 # Runs with the model repo as CWD so relative paths keep working.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deeplearning/deploy

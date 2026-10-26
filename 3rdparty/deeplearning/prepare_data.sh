@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# usage: launch/prepare_data.sh [--with-gt-db] [--version v1.0-mini] [--dataroot data/nuscenes]
+# usage: prepare_data.sh [--with-gt-db] [--version v1.0-mini] [--dataroot data/nuscenes]
 # Creates the data symlink + det/seg infos pkls; the occ infos enrichment
 # (ann_infos/scene/occ_path) is tools/create_data.py on top of the bevdetv2 pkls.
 set -e
-cd "$(dirname "$0")/.."
-source launch/env.sh
+cd "$(dirname "$0")"
+source ./env.sh
 WITH_GT_DB=0; VERSION=v1.0-mini; DATAROOT=data/nuscenes
 while [ $# -gt 0 ]; do
   case "$1" in

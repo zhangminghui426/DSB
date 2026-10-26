@@ -2,7 +2,7 @@
 
 用法（3rdparty/deeplearning 下）：
   python deploy/scripts/export.py CONFIG CHECKPOINT [--outdir outputs/onnx] [--verify]
-  构建 engine：DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
+  构建 engine：DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/export_trt.sh
 
 图：camera.backbone / camera.vtransform / fuser / head.bbox /
     lidar.backbone.xyz（SCN，libspconv 解析；BN+ReLU 必须融合进卷积）。
@@ -364,7 +364,7 @@ def main():
     export_scn_onnx(model, scn_path)
 
     print("[export] engine: DEBUG_MODEL=<name> DEBUG_PRECISION=fp16 "
-          "bash deploy/build_trt_engine.sh")
+          "bash deploy/export_trt.sh")
 
 
 if __name__ == "__main__":

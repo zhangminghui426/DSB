@@ -10,9 +10,8 @@ C++ 推理完全移植 NVIDIA CUDA-BEVFusion（deploy/src/），不再区分预�
 deploy/
 ├── README.md            # 本文件（部署总览）
 ├── CMakeLists.txt       # C++ 构建（mkdir -p build && cd build && cmake .. && make）
-├── build_trt_engine.sh  # engine 构建脚本（CUDA-BEVFusion 原版，trtexec --fp16 + IO
-│                        #   fp16:chw；输出 deploy/model/<name>/build/*.plan）
-├── trt.sh               # 构建并运行 C++ 推理（. environment.sh + cmake/make + bevfusion）
+├── export_trt.sh        # engine 构建（trtexec --fp16 + IO fp16:chw -> model/<name>/build）
+├── run_trt.sh           # 构建并运行 C++ 推理（. environment.sh + cmake/make + bevfusion）
 ├── environment.sh       # 推理环境变量（TensorRT/CUDA/libspconv 路径）
 ├── export.sh            # ONNX 导出旧入口（可不用）
 ├── env.sh               # 导出环境（PY/CUDA_HOME 等，export.sh source 用）
@@ -30,14 +29,14 @@ deploy/
    cd 3rdparty/deeplearning
    python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx --verify
    ```
-2. 构建 engine（build_trt_engine.sh，输出 deploy/model/<name>/build/）：
+2. 构建 engine（export_trt.sh，输出 deploy/model/<name>/build/）：
    ```bash
    cd 3rdparty/deeplearning
    mkdir -p deploy/model/resnet50
    cp outputs/onnx/camera.backbone.onnx outputs/onnx/camera.vtransform.onnx \
       outputs/onnx/fuser.onnx outputs/onnx/head.bbox.onnx deploy/model/resnet50/
    cp outputs/onnx/lidar.backbone.xyz.onnx deploy/model/resnet50/
-   DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
+   DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/export_trt.sh
    ```
 3. 生成 example-data 输入：
    ```bash
@@ -46,7 +45,7 @@ deploy/
    ```
 4. 构建并运行 C++ 推理：
    ```bash
-   cd 3rdparty/deeplearning/deploy && bash trt.sh
+   cd 3rdparty/deeplearning/deploy && bash run_trt.sh
    ```
 
 ## 产物
