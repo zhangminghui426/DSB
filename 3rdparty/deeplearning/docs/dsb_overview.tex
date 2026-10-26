@@ -72,16 +72,16 @@
 % ================================================================ outputs (real inference)
 \node[inner sep=1.5pt, draw=inkA!40, line width=0.5pt, rounded corners=3pt, fill=white] (det_out) at (33,17)
   {\includegraphics[width=5.6cm]{figs/det_result.png}};
-\node[tag, anchor=north] at (33,15.75) {3D detection: BEV + camera};
+\node[tag, anchor=north] at (33,14.55) {detection: 6 cameras + centered BEV};
 \draw[arr] (object.east) -- (det_out.west);
 
 \node[inner sep=1.5pt, draw=inkA!40, line width=0.5pt, rounded corners=3pt, fill=white] (seg_out) at (33,8)
-  {\includegraphics[width=3.3cm]{figs/seg_result.png}};
-\node[tag, anchor=north] at (33,6.15) {BEV segmentation: 6 classes};
+  {\includegraphics[width=4.0cm]{figs/seg_result.png}};
+\node[tag, anchor=north] at (33,5.65) {BEV segmentation: pred vs GT};
 \draw[arr] (map.east) -- (seg_out.west);
 
 \node[inner sep=1.5pt, draw=inkA!40, line width=0.5pt, rounded corners=3pt, fill=white] (occ_out) at (33,2.5)
-  {\includegraphics[width=3.3cm]{figs/occ_3d.png}};
+  {\includegraphics[width=3.3cm]{figs/occ_result.png}};
 \node[tag, anchor=north] at (33,0.6) {occupancy: 200$\times$200$\times$16};
 \draw[arr] (occhead.east) -- (occ_out.west);
 

@@ -145,6 +145,62 @@ def show_occ(occ_state, occ_show, voxel_size, vis=None, offset=(0, 0, 0)):
                             large_voxel=True, voxel_size=voxel_size[0])
 
 
+def render_occ_offscreen(occ, occ_show, voxel_size, path, size=(900, 800),
+                         crop_m=None, fov=45.0, bg=(1, 1, 1)):
+    """Headless equivalent of show_occ: colored voxel boxes + black wireframe.
+
+    Uses Open3D ``OffscreenRenderer`` (Vulkan/EGL) so it also runs on machines
+    without a display (the GLFW visualizer used by ``show_occ`` needs X11).
+    """
+    from open3d.visualization import rendering
+
+    occ = torch.as_tensor(occ)
+    idx = torch.where(torch.as_tensor(occ_show).bool())
+    coords = torch.stack(idx, dim=1).numpy().astype(np.float32)
+    labels = occ[idx].numpy()
+    if crop_m is not None:
+        x = coords[:, 0] * voxel_size[0] + POINT_CLOUD_RANGE[0]
+        y = coords[:, 1] * voxel_size[1] + POINT_CLOUD_RANGE[1]
+        keep = (np.abs(x) <= crop_m) & (np.abs(y) <= crop_m)
+        coords, labels = coords[keep], labels[keep]
+    if not len(coords):
+        raise ValueError("no visible occupancy voxels to render")
+
+    unit = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                     [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], np.float32)
+    faces_t = np.array([[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
+                        [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
+                        [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]], np.int32)
+    size3 = np.asarray(voxel_size, np.float32)
+    origin = np.asarray(POINT_CLOUD_RANGE[:3], np.float32)
+    colors = np.asarray(OCC_COLOR_MAP, np.float32) / 255.0
+
+    renderer = rendering.OffscreenRenderer(*size)
+    renderer.scene.set_background(list(bg) + [1.0])
+    for c in range(NUM_CLASSES):
+        m = labels == c
+        if not m.any():
+            continue
+        xyz = coords[m]
+        verts = (xyz[:, None, :] * size3 + unit[None, :, :] * size3 + origin).reshape(-1, 3)
+        faces = (np.arange(len(xyz))[:, None, None] * 8 + faces_t[None]).reshape(-1, 3)
+        mesh = o3d.geometry.TriangleMesh(
+            o3d.utility.Vector3dVector(verts),
+            o3d.utility.Vector3iVector(faces.astype(np.int32)))
+        mesh.compute_vertex_normals()
+        mat = rendering.MaterialRecord()
+        mat.shader = "defaultLit"
+        mat.base_color = list(colors[c]) + [1.0]
+        renderer.scene.add_geometry(f"occ_{c}", mesh, mat)
+
+    rng = float(crop_m if crop_m is not None else 40.0)
+    renderer.setup_camera(fov, np.array([0, 0, 2], np.float32),
+                          np.array([rng * 1.55, -rng * 1.55, rng * 1.4 + 2], np.float32),
+                          np.array([0, 0, 1], np.float32))
+    o3d.io.write_image(path, renderer.render_to_image())
+    return path
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
