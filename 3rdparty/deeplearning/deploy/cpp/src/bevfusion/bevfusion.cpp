@@ -40,7 +40,7 @@ static void dump_mid_tensor(const char* name, const nvtype::half* data,
                             const std::vector<int>& shape) {
   const char* dir = getenv("BEVFUSION_DUMP_DIR");
   if (!dir) return;
-  std::string path = std::string(dir) + "/cpp_" + name;
+  std::string path = std::string(dir) + "/trt_" + name;
   FILE* f = fopen(path.c_str(), "wb");
   if (!f) return;
   int hdr[3] = {0x33FF1101, (int)shape.size(), 2};  // 2 = float16
@@ -50,7 +50,7 @@ static void dump_mid_tensor(const char* name, const nvtype::half* data,
   for (int s : shape) n *= s;
   fwrite(data, sizeof(nvtype::half), n, f);
   fclose(f);
-  printf("[dump] cpp_%s shape=(%d", name, shape[0]);
+  printf("[dump] trt_%s shape=(%d", name, shape[0]);
   for (size_t i = 1; i < shape.size(); ++i) printf(",%d", shape[i]);
   printf(")\n");
 }

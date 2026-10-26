@@ -400,14 +400,14 @@ def _load_bf_tensor(p):
 
 
 def backend_cpp(dump_dir, cpp_dir):
-    print("== torch vs cpp（C++ 全链损失，含 lidar SCN / voxelize）==")
+    print("== torch vs trt（C++ 全链：TRT 引擎 + libspconv SCN / voxelize）==")
     for t in ["lidar_bev", "cam_bev", "middle"]:
         try:
             a = load_dump(t, dump_dir, "torch")
-            b = _load_bf_tensor(os.path.join(cpp_dir, f"cpp_{t}"))
+            b = _load_bf_tensor(os.path.join(cpp_dir, f"trt_{t}"))
             print(_stats(a, b, t))
         except FileNotFoundError:
-            print(f"  {t}: cpp dump 缺失（先设 BEVFUSION_DUMP_DIR 跑 C++）")
+            print(f"  {t}: trt 全链 dump 缺失（先设 BEVFUSION_DUMP_DIR 跑 C++）")
 
 
 def _stats(a, b, name):
@@ -450,7 +450,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("config", nargs="?")
     ap.add_argument("ckpt", nargs="?")
-    ap.add_argument("--backend", default="all", choices=["torch", "onnx", "trt", "diff", "cpp", "vis", "all"])
+    ap.add_argument("--backend", default="all", choices=["torch", "onnx", "trt", "diff", "trt-full", "vis", "all"])
     ap.add_argument("--onnx-dir", default="outputs/onnx_bf")
     ap.add_argument("--engine-dir", default="deploy/cpp/model/resnet50/build")
     ap.add_argument("--dump-dir", default="outputs/model_diff")
@@ -461,7 +461,7 @@ def main():
     ap.add_argument("--head-plan", default=None,
                     help="head.bbox plan 文件名（如 head.bbox.fp32.plan；默认 layernormplugin.plan 优先）")
     ap.add_argument("--cpp-dir", default="outputs/model_diff/cpp",
-                    help="C++ BEVFUSION_DUMP_DIR 落盘目录（--backend cpp）")
+                    help="trt 全链 dump 落盘目录（--backend trt-full；C++ BEVFUSION_DUMP_DIR）")
     args = ap.parse_args()
 
     model = None
@@ -474,7 +474,7 @@ def main():
         backend_trt(args.engine_dir, args.dump_dir, model, args.head_plan)
     if args.backend in ("diff", "all"):
         backend_diff(args.dump_dir)
-    if args.backend in ("cpp", "all"):
+    if args.backend in ("trt-full", "all"):
         backend_cpp(args.dump_dir, args.cpp_dir)
     if args.backend in ("vis", "all"):
         if model is None and args.backend == "vis":
