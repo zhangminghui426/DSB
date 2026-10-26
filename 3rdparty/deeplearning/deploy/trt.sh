@@ -21,13 +21,9 @@
 # DEALINGS IN THE SOFTWARE.
 
 # configure the environment
-. tool/environment.sh
-
-if [ ! -f tool/environment.sh ]; then
-    echo "environment.sh missing."
-    exit
-fi
-
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE"
+. ./environment.sh
 set -e
 
 # generate the protobuf code.

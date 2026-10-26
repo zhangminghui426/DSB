@@ -34,7 +34,7 @@
 #include <vector>
 
 // 调试：BEVFUSION_DUMP_DIR 设置时落盘中间张量（save_tensor 格式），
-// 供 deploy/tool/model_diff.py --backend trt-full 对比。
+// 供 deploy/scripts/model_diff.py --backend trt-full 对比。
 static void dump_mid_tensor(const char* name, const nvtype::half* dev,
                             const std::vector<int>& shape, void* stream) {
   const char* dir = getenv("BEVFUSION_DUMP_DIR");

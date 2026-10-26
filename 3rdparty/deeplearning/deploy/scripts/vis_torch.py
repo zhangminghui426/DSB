@@ -1,7 +1,7 @@
 """渲染 torch / C++ 检测框到 6 相机 + BEV 视图。
 
 用法（3rdparty/deeplearning 下）：
-  python deploy/tool/vis_torch.py --dump-dir outputs/model_diff \
+  python deploy/scripts/vis_torch.py --dump-dir outputs/model_diff \
       --data-dir outputs/example-data [--cpp-boxes cpp_boxes.txt]
 输出：torch_vis.jpg、cpp_vis.jpg、compare_vis.jpg（--out-dir，默认 outputs/model_diff）。
 """
@@ -12,16 +12,16 @@ import os.path as osp
 import sys
 
 _HERE = osp.dirname(osp.abspath(__file__))
-for _path in (_HERE, osp.join(_HERE, "..", "..")):  # tool/, deeplearning/
+for _path in (_HERE, osp.join(_HERE, "..", "..")):  # scripts/, deeplearning/
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
 import numpy as np  # noqa: E402
-from common import load_tensor, parse_cpp_boxes  # noqa: E402
+from deploy.scripts.common import load_tensor, parse_cpp_boxes  # noqa: E402
 from PIL import Image
 
-from scripts.render import DET_CLASSES, DET_COLORS, compose_det_frame, render_det_bev
-from scripts.visualize import CAM_NAMES, shifted_corners
+from scripts.render import DET_CLASSES, DET_COLORS, compose_det_frame, render_det_bev  # noqa: E402
+from scripts.visualize import CAM_NAMES, shifted_corners  # noqa: E402
 
 CAM_ORDER = [2, 0, 1, 4, 3, 5]  # 显示顺序 FL,F,FR / BL,B,BR
 FILE_NAMES = ["FRONT", "FRONT_RIGHT", "FRONT_LEFT", "BACK", "BACK_LEFT", "BACK_RIGHT"]

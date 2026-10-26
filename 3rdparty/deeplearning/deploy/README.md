@@ -1,8 +1,8 @@
 # TRT 部署（deploy/）
 
 C++ 推理完全移植 NVIDIA CUDA-BEVFusion（deploy/src/），不再区分预处理/推理/后处理三层，
-直接采用参考实现 src/bevfusion/ 平铺结构。部署只走 C++；Python 侧仅负责模型导出
-（deploy/tool/onnx_stage.py，按 CUDA-BEVFusion 模型结构导出 5 个 onnx）与 engine 构建前置。
+直接采用参考实现 src/bevfusion/ 平铺结构。Python 侧负责 ONNX 导出、输入生成、
+三端对拍与可视化（deploy/scripts/）。
 
 ## 目录结构（扁平布局）
 
@@ -12,12 +12,14 @@ deploy/
 ├── CMakeLists.txt       # C++ 构建（mkdir -p build && cd build && cmake .. && make）
 ├── build_trt_engine.sh  # engine 构建脚本（CUDA-BEVFusion 原版，trtexec --fp16 + IO
 │                        #   fp16:chw；输出 deploy/model/<name>/build/*.plan）
-├── export.sh            # ONNX -> engine 旧入口（可不用）
+├── trt.sh               # 构建并运行 C++ 推理（. environment.sh + cmake/make + bevfusion）
+├── environment.sh       # 推理环境变量（TensorRT/CUDA/libspconv 路径）
+├── export.sh            # ONNX 导出旧入口（可不用）
 ├── env.sh               # 导出环境（PY/CUDA_HOME 等，export.sh source 用）
 ├── src/                 # C++ 源码（bevfusion/common/onnx/plugins + main.cpp）
 ├── libs/                # 第三方库（libspconv / cuosd / spconv-onnx / stb）
 ├── model/               # 引擎/ONNX（<name>/build/*.plan + <name>/lidar.backbone.xyz.onnx）
-├── tool/                # 阶段脚本：torch_stage.py / onnx_stage.py / trt_stage.sh + model_diff.py / vis_torch.py
+├── scripts/             # export.py（ONNX）/ example_data.py（输入）/ model_diff.py（对拍）/ vis_torch.py
 └── lean/                # SCN onnx 导出库（符号 trace / BN+ReLU 融合 / inverse 支持）
 ```
 
@@ -26,7 +28,7 @@ deploy/
 1. 导出模型 onnx（Python，5 个 onnx → outputs/onnx/）：
    ```bash
    cd 3rdparty/deeplearning
-   python deploy/tool/onnx_stage.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx --verify
+   python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx --verify
    ```
 2. 构建 engine（build_trt_engine.sh，输出 deploy/model/<name>/build/）：
    ```bash
@@ -37,12 +39,14 @@ deploy/
    cp outputs/onnx/lidar.backbone.xyz.onnx deploy/model/resnet50/
    DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
    ```
-3. 生成 example-data 输入：python deploy/tool/torch_stage.py（见脚本 docstring）
-4. 构建并运行 C++ 推理（cwd 在 deploy/，模型/数据相对 deploy/）：
+3. 生成 example-data 输入：
    ```bash
-   cd 3rdparty/deeplearning/deploy
-   bash tool/trt_stage.sh（或 . tool/environment.sh && mkdir -p build && cd build &&
-                     cmake .. && make -j && cd .. && ./build/bevfusion ../outputs/example-data resnet50 fp16）
+   cd 3rdparty/deeplearning
+   python deploy/scripts/example_data.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth
+   ```
+4. 构建并运行 C++ 推理：
+   ```bash
+   cd 3rdparty/deeplearning/deploy && bash trt.sh
    ```
 
 ## 产物
@@ -61,7 +65,7 @@ deploy/
 
 ```bash
 cd 3rdparty/deeplearning
-python deploy/tool/model_diff.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+python deploy/scripts/model_diff.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
     --backend all --dump-dir outputs/model_diff
 ```
 

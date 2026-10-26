@@ -22,7 +22,7 @@
 
 # configure the environment
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-. ${SCRIPT_DIR}/tool/environment.sh
+. ${SCRIPT_DIR}/environment.sh
 
 if [ "$ConfigurationStatus" != "Success" ]; then
     echo "Exit due to configure failure."

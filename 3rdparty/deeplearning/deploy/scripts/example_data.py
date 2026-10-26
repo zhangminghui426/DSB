@@ -1,7 +1,7 @@
 """torch 阶段：导出 C++ 推理输入（example-data）与 torch 参考框。
 
 用法（3rdparty/deeplearning 下）：
-  python deploy/tool/torch_stage.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+  python deploy/scripts/example_data.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
       --out-dir outputs/example-data --sample-index 0
 
 输出：<out-dir>/points.tensor、4 个矩阵 .tensor、6 张相机 jpg；
@@ -20,9 +20,8 @@ for _path in (_HERE, _DL_ROOT):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from common import save_tensor  # noqa: E402
+from deploy.scripts.common import CAM_NAMES, save_tensor  # noqa: E402
 
-CAM_NAMES = ["FRONT", "FRONT_RIGHT", "FRONT_LEFT", "BACK", "BACK_LEFT", "BACK_RIGHT"]
 MATRICES = ("camera2lidar", "camera_intrinsics", "lidar2image", "img_aug_matrix")
 
 
@@ -73,7 +72,7 @@ def main():
     boxes = pred[0]["boxes_3d"].tensor
 
     print(f"[torch] {out}: points {points.shape}, {len(boxes)} ref boxes")
-    print("[torch] 逐框/逐模块 dump: python deploy/tool/model_diff.py ... --backend torch")
+    print("[torch] 逐框/逐模块 dump: python deploy/scripts/model_diff.py ... --backend torch")
 
 
 if __name__ == "__main__":
