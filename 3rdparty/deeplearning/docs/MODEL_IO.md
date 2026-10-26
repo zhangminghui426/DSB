@@ -3,6 +3,9 @@
 以检测配置 `configs/det_convfuser.py`(camera+lidar 融合)与分割配置
 `configs/seg_fusion_bev256d2_lss.py` 为准。B = batch size。
 
+架构与部署切分图：[bevfusion_architecture.tex](bevfusion_architecture.tex)
+（[PDF](bevfusion_architecture.pdf)，`pdflatex` 或 `tectonic` 编译）。
+
 ## 坐标系约定(实测确认)
 
 - **LiDAR 自车架**:x = 右,y = 前,z = 上(用相邻帧 ego 位移标定验证)。
