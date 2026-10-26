@@ -207,7 +207,9 @@ def backend_onnx(onnx_dir, dump_dir):
 def _trt_session(engine_dir, graph):
     import tensorrt as trt
     rt = trt.Runtime(trt.Logger(trt.Logger.ERROR))
-    with open(os.path.join(engine_dir, graph + ".plan"), "rb") as f:
+    # graph 可为完整路径（head.bbox.layernormplugin.plan）
+    path = graph if osp.isabs(graph) or "/" in graph else os.path.join(engine_dir, graph + ".plan")
+    with open(path, "rb") as f:
         eng = rt.deserialize_cuda_engine(f.read())
     ctx = eng.create_execution_context()
     names = [eng.get_tensor_name(i) for i in range(eng.num_io_tensors)]
@@ -234,10 +236,15 @@ def backend_trt(engine_dir, dump_dir, model=None):
     stream = torch.cuda.current_stream().cuda_stream
     for graph in graphs:
         path = os.path.join(engine_dir, graph + ".plan")
+        # head.bbox 优先 layernormplugin 版（myelin fusion 有 TRT bug）
+        if graph == "head.bbox":
+            alt = os.path.join(engine_dir, "head.bbox.layernormplugin.plan")
+            if os.path.exists(alt):
+                path = alt
         if not os.path.exists(path):
             print(f"[trt] SKIP {graph}: {path} missing")
             continue
-        ctx, in_names, out_names = _trt_session(engine_dir, graph)
+        ctx, in_names, out_names = _trt_session(engine_dir, path)
         buffers = {}
         for name in in_names:
             feed_key = next(k for k, v in feed_map[graph].items() if v == name) \
