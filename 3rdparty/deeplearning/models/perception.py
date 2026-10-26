@@ -19,6 +19,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from models.backbones.resnet import ResNetBackbone
 from models.backbones.second import SECOND
 from models.backbones.sparse_encoder import SparseEncoder
 from models.backbones.swin import SwinTransformer
@@ -59,9 +60,17 @@ class BevPerception(nn.Module):
                 vtransform = LSSTransform(**vtransform_cfg)
             else:
                 raise ValueError(f"unsupported vtransform: {vtransform_type}")
+            backbone_cfg = dict(camera["backbone"])
+            backbone_type = backbone_cfg.pop("type", "SwinTransformer")
+            if backbone_type == "SwinTransformer":
+                backbone = SwinTransformer(**backbone_cfg)
+            elif backbone_type == "ResNetBackbone":
+                backbone = ResNetBackbone(**backbone_cfg)
+            else:
+                raise ValueError(f"unsupported camera backbone: {backbone_type}")
             self.encoders["camera"] = nn.ModuleDict(
                 {
-                    "backbone": SwinTransformer(**drop_type(camera["backbone"])),
+                    "backbone": backbone,
                     "neck": GeneralizedLSSFPN(**drop_type(camera["neck"])),
                     "vtransform": vtransform,
                 }
@@ -127,7 +136,9 @@ class BevPerception(nn.Module):
     def init_weights(self):
         """Scratch init lives in each module; only Swin needs an explicit call."""
         if "camera" in self.encoders:
-            self.encoders["camera"]["backbone"].init_weights()
+            backbone = self.encoders["camera"]["backbone"]
+            if hasattr(backbone, "init_weights"):
+                backbone.init_weights()
 
     def extract_camera_features(
         self,
