@@ -28,6 +28,33 @@
 #include "common/check.hpp"
 #include "common/timer.hpp"
 
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+// 调试：BEVFUSION_DUMP_DIR 环境变量设置时，落盘中间张量（格式与
+// deploy/tools/export_example_data.py save_tensor 一致：3xint32 header +
+// dims + 原始数据），供 deploy/tools/model_diff.py 对比。
+static void dump_mid_tensor(const char* name, const nvtype::half* data,
+                            const std::vector<int>& shape) {
+  const char* dir = getenv("BEVFUSION_DUMP_DIR");
+  if (!dir) return;
+  std::string path = std::string(dir) + "/cpp_" + name;
+  FILE* f = fopen(path.c_str(), "wb");
+  if (!f) return;
+  int hdr[3] = {0x33FF1101, (int)shape.size(), 2};  // 2 = float16
+  fwrite(hdr, sizeof(int), 3, f);
+  for (int s : shape) fwrite(&s, sizeof(int), 1, f);
+  int64_t n = 1;
+  for (int s : shape) n *= s;
+  fwrite(data, sizeof(nvtype::half), n, f);
+  fclose(f);
+  printf("[dump] cpp_%s shape=(%d", name, shape[0]);
+  for (size_t i = 1; i < shape.size(); ++i) printf(",%d", shape[i]);
+  printf(")\n");
+}
+
 namespace bevfusion {
 
 class CoreImplement : public Core {
@@ -161,6 +188,7 @@ class CoreImplement : public Core {
 
     timer_.start(_stream);
     const nvtype::half* lidar_feature = this->lidar_scn_->forward(lidar_points_device_, num_points, stream);
+    dump_mid_tensor("lidar_bev", lidar_feature, {1, 256, 180, 180});
     times.emplace_back(timer_.stop("Lidar Backbone"));
 
     timer_.start(_stream);
@@ -179,10 +207,12 @@ class CoreImplement : public Core {
 
     timer_.start(_stream);
     const nvtype::half* camera_bevfeat = camera_vtransform_->forward(camera_bev, stream);
+    dump_mid_tensor("cam_bev", camera_bevfeat, {1, 80, 180, 180});
     times.emplace_back(timer_.stop("VTransform"));
 
     timer_.start(_stream);
     const nvtype::half* fusion_feature = this->transfusion_->forward(camera_bevfeat, lidar_feature, stream);
+    dump_mid_tensor("middle", fusion_feature, {1, 512, 180, 180});
     times.emplace_back(timer_.stop("Transfusion"));
 
     timer_.start(_stream);
