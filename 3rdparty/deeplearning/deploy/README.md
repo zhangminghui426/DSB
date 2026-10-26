@@ -2,7 +2,7 @@
 
 C++ 推理完全移植 NVIDIA CUDA-BEVFusion（deploy/src/），不再区分预处理/推理/后处理三层，
 直接采用参考实现 src/bevfusion/ 平铺结构。部署只走 C++；Python 侧仅负责模型导出
-（deploy/export.py，按 CUDA-BEVFusion 模型结构导出 5 个 onnx）与 engine 构建前置。
+（deploy/scripts/export.py，按 CUDA-BEVFusion 模型结构导出 5 个 onnx）与 engine 构建前置。
 
 ## 目录结构（扁平布局）
 
@@ -12,14 +12,14 @@ deploy/
 ├── CMakeLists.txt       # C++ 构建（mkdir -p build && cd build && cmake .. && make）
 ├── build_trt_engine.sh  # engine 构建脚本（CUDA-BEVFusion 原版，trtexec --fp16 + IO
 │                        #   fp16:chw；输出 deploy/model/<name>/build/*.plan）
-├── export.py            # 唯一 ONNX 导出脚本（det: BF 结构 5 图 + SCN；--verify 数值对拍）
+├── scripts/              # Python：export.py（唯一 ONNX 导出脚本，det BF 结构 + SCN；--verify）
+│   └── export.py
 ├── export.sh            # ONNX -> engine 旧入口（可不用）
 ├── env.sh               # 导出环境（PY/CUDA_HOME 等，export.sh source 用）
 ├── src/                 # C++ 源码（bevfusion/common/onnx/plugins + main.cpp）
 ├── libs/                # 第三方库（libspconv / cuosd / spconv-onnx / stb）
 ├── model/               # 引擎/ONNX（<name>/build/*.plan + <name>/lidar.backbone.xyz.onnx）
 ├── tool/                # 工具（environment.sh / run.sh + model_diff.py 等 Python 工具）
-├── scripts/             # 导出链依赖的 tensor 名常量包（graphs，无推理代码）
 └── lean/                # SCN onnx 导出库（符号 trace / BN 融合 / inverse 支持）
 ```
 
@@ -28,7 +28,7 @@ deploy/
 1. 导出模型 onnx（Python，5 个 onnx → outputs/onnx/）：
    ```bash
    cd 3rdparty/deeplearning
-   python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx --verify
+   python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx --verify
    ```
 2. 构建 engine（build_trt_engine.sh，输出 deploy/model/<name>/build/）：
    ```bash

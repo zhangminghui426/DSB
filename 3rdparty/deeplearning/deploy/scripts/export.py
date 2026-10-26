@@ -13,7 +13,7 @@ det 按 CUDA-BEVFusion（NVIDIA-AI-IOT/Lidar_AI_Solution）模块切分（BF 结
 每个 dense 图都可被 TRT 直接解析（SCN 除外，走 libspconv 引擎）。
 
 Usage（run from the model repo root 3rdparty/deeplearning）:
-  python deploy/export.py CONFIG CHECKPOINT --task det --verify
+  python deploy/scripts/export.py CONFIG CHECKPOINT --verify
   之后构建 engine：cd 3rdparty/deeplearning && DEBUG_MODEL=resnet50 \
       DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 """
@@ -23,9 +23,12 @@ import os
 import os.path as osp
 import sys
 
-# deeplearning 根（上 2 级）：models/datasets/scripts 与 deploy.scripts 包都在其下
-_DL_ROOT = osp.dirname(osp.dirname(osp.abspath(__file__)))
+# 路径：scripts/（本文件） -> deploy/ -> deeplearning 根
+_HERE = osp.dirname(osp.abspath(__file__))
+_DEPLOY_ROOT = osp.dirname(_HERE)
+_DL_ROOT = osp.dirname(_DEPLOY_ROOT)
 sys.path.insert(0, _DL_ROOT)
+sys.path.insert(0, _DEPLOY_ROOT)
 
 import numpy as np
 import torch
@@ -35,8 +38,6 @@ from models import build_model
 from scripts.config import load_config
 from scripts.trainer import load_model_checkpoint
 
-from deploy.scripts.graphs import GRAPH_IO
-
 # ------------------------------------------------------------------ 图定义
 # det 用 BF 结构（与 CUDA-BEVFusion 引擎输入输出名一致）
 BF_IO = {
@@ -45,13 +46,12 @@ BF_IO = {
     "fuser": (["camera", "lidar"], ["middle"]),
     "head.bbox": (["middle"], ["score", "rot", "dim", "reg", "height", "vel"]),
 }
-IO_MAP = {"det": BF_IO, "seg": GRAPH_IO}
 SCN_ONNX_NAME = "lidar.backbone.xyz.onnx"
 
 
 # ------------------------------------------------------------------ wrappers
 class CamBackbone(nn.Module):
-    """Swin-T + GeneralizedLSSFPN -> (B, 6, 256, 32, 88)（seg 旧结构用）。"""
+    """backbone + neck -> (B, N, C, fH, fW) feats（_sample_inputs 合成输入用）。"""
 
     def __init__(self, model):
         super().__init__()
@@ -122,19 +122,6 @@ class CamVtransformDet(nn.Module):
         return self.vt.depthnet(x)
 
 
-class CamVtransformSeg(nn.Module):
-    """LSSTransform depthnet: feats -> (B*N, D+C, fH, fW)。"""
-
-    def __init__(self, model):
-        super().__init__()
-        self.vt = model.encoders["camera"]["vtransform"]
-
-    def forward(self, feats):
-        B, N, C, fH, fW = feats.size()
-        x = feats.view(B * N, C, fH, fW)
-        return self.vt.depthnet(x)
-
-
 class DownsampleBf(nn.Module):
     """bev_pool 输出 (1,80,360,360) -> (1,80,180,180)（= vtransform.downsample）。"""
 
@@ -189,6 +176,8 @@ class HeadBboxBf(nn.Module):
 
 
 class HeadMap(nn.Module):
+    """旧 seg head.map（保留；部署链不再导出此图）。"""
+
     def __init__(self, model):
         super().__init__()
         self.head = model.heads["map"]
@@ -198,43 +187,22 @@ class HeadMap(nn.Module):
 
 
 WRAPPERS = {
-    "det": {
-        "camera.backbone": (CamBackboneBf, BF_IO["camera.backbone"][0], BF_IO["camera.backbone"][1]),
-        "camera.vtransform": (DownsampleBf, BF_IO["camera.vtransform"][0], BF_IO["camera.vtransform"][1]),
-        "fuser": (FuserDecoder, BF_IO["fuser"][0], BF_IO["fuser"][1]),
-        "head.bbox": (HeadBboxBf, BF_IO["head.bbox"][0], BF_IO["head.bbox"][1]),
-    },
-    "seg": {
-        "camera.backbone": (CamBackbone, GRAPH_IO["seg"]["camera.backbone"][0],
-                            GRAPH_IO["seg"]["camera.backbone"][1]),
-        "camera.vtransform": (CamVtransformSeg, GRAPH_IO["seg"]["camera.vtransform"][0],
-                              GRAPH_IO["seg"]["camera.vtransform"][1]),
-        "fuser": (FuserDecoder, GRAPH_IO["seg"]["fuser"][0], GRAPH_IO["seg"]["fuser"][1]),
-        "head.map": (HeadMap, GRAPH_IO["seg"]["head.map"][0], GRAPH_IO["seg"]["head.map"][1]),
-    },
+    "camera.backbone": (CamBackboneBf, BF_IO["camera.backbone"][0], BF_IO["camera.backbone"][1]),
+    "camera.vtransform": (DownsampleBf, BF_IO["camera.vtransform"][0], BF_IO["camera.vtransform"][1]),
+    "fuser": (FuserDecoder, BF_IO["fuser"][0], BF_IO["fuser"][1]),
+    "head.bbox": (HeadBboxBf, BF_IO["head.bbox"][0], BF_IO["head.bbox"][1]),
 }
 
 
-def graph_args(name, inp, task="det"):
-    """Map a sampled-input dict to the positional args of a graph wrapper."""
-    if task == "det":  # BF 结构
-        if name == "camera.backbone":
-            return (inp["img"], inp["depth"])
-        if name == "camera.vtransform":
-            return (inp["bev360"],)
-        if name == "fuser":
-            return (inp["cam_bev"], inp["lidar_bev"])
-        return (inp["middle"],)  # head.bbox
-    # seg 旧结构
+def graph_args(name, inp):
+    """Map a sampled-input dict to the positional args of a graph wrapper（BF 结构）。"""
     if name == "camera.backbone":
-        return (inp["img"],)
+        return (inp["img"], inp["depth"])
     if name == "camera.vtransform":
-        if inp["depth"] is not None:
-            return (inp["feats"], inp["depth"])
-        return (inp["feats"],)
+        return (inp["bev360"],)
     if name == "fuser":
         return (inp["cam_bev"], inp["lidar_bev"])
-    return (inp["decoder_feat"],)  # head.map
+    return (inp["middle"],)  # head.bbox
 
 
 # ------------------------------------------------------------------ helpers
@@ -259,7 +227,7 @@ def _bn_restore(model, state):
     model.eval()
 
 
-def _sample_inputs(cfg, model, task):
+def _sample_inputs(cfg, model):
     """合成输入：verify 只对比 onnx 与 torch 在同一输入下的输出相对差。
 
     全部使用固定形状的随机/单位张量（不依赖推理链路）。
@@ -269,12 +237,8 @@ def _sample_inputs(cfg, model, task):
     img = torch.randn(1, 6, 3, 256, 704, device=dev, dtype=dt)
     with torch.no_grad():
         feats = CamBackbone(model)(img)
-        if task == "det":
-            depth = torch.rand(1, 6, 1, 256, 704, device=dev, dtype=dt)
-            depthnet = CamVtransformDet(model)(feats, depth)
-        else:
-            depth = None
-            depthnet = CamVtransformSeg(model)(feats)
+        depth = torch.rand(1, 6, 1, 256, 704, device=dev, dtype=dt)
+        depthnet = CamVtransformDet(model)(feats, depth)
         eye4 = torch.eye(4, device=dev, dtype=torch.float32)
         batch = {
             "camera2lidar": eye4.unsqueeze(0).repeat(6, 1, 1),
@@ -285,30 +249,26 @@ def _sample_inputs(cfg, model, task):
         cam_bev = torch.randn(1, 80, 360, 360, device=dev, dtype=dt)
         lidar_bev = torch.randn(1, 256, 180, 180, device=dev, dtype=dt)
         decoder_feat = FuserDecoder(model)(cam_bev, lidar_bev)
-        if task == "det":
-            # bev_pool 输出（DownsampleBf 输入，360x360）
-            vt = model.encoders["camera"]["vtransform"]
-            B, N = img.shape[0], img.shape[1]
-            D, C = vt.D, vt.C
-            fH, fW = vt.feature_size
-            d = depthnet[:, :D].softmax(dim=1).view(B, N, D, fH, fW)
-            ft = depthnet[:, D:].view(B, N, C, fH, fW)
-            x = (d.unsqueeze(2) * ft.unsqueeze(3))
-            x = x.permute(0, 1, 3, 4, 5, 2).contiguous()
-            geom = vt.get_geometry(
-                batch["camera2lidar"][..., :3, :3],
-                batch["camera2lidar"][..., :3, 3],
-                batch["camera_intrinsics"][..., :3, :3],
-                batch["img_aug_matrix"][..., :3, :3],
-                batch["img_aug_matrix"][..., :3, 3],
-                extra_rots=batch["lidar_aug_matrix"][..., :3, :3],
-                extra_trans=batch["lidar_aug_matrix"][..., :3, 3],
-            )
-            bev360 = vt.bev_pool(geom, x)  # (B, C, 360, 360)
-            middle = FuserDecoder(model)(cam_bev, lidar_bev)  # head.bbox 输入
-        else:
-            bev360 = None
-            middle = None
+        # bev_pool 输出（DownsampleBf 输入，360x360）
+        vt = model.encoders["camera"]["vtransform"]
+        B, N = img.shape[0], img.shape[1]
+        D, C = vt.D, vt.C
+        fH, fW = vt.feature_size
+        d = depthnet[:, :D].softmax(dim=1).view(B, N, D, fH, fW)
+        ft = depthnet[:, D:].view(B, N, C, fH, fW)
+        x = (d.unsqueeze(2) * ft.unsqueeze(3))
+        x = x.permute(0, 1, 3, 4, 5, 2).contiguous()
+        geom = vt.get_geometry(
+            batch["camera2lidar"][..., :3, :3],
+            batch["camera2lidar"][..., :3, 3],
+            batch["camera_intrinsics"][..., :3, :3],
+            batch["img_aug_matrix"][..., :3, :3],
+            batch["img_aug_matrix"][..., :3, 3],
+            extra_rots=batch["lidar_aug_matrix"][..., :3, :3],
+            extra_trans=batch["lidar_aug_matrix"][..., :3, 3],
+        )
+        bev360 = vt.bev_pool(geom, x)  # (B, C, 360, 360)
+        middle = FuserDecoder(model)(cam_bev, lidar_bev)  # head.bbox 输入
 
     return dict(batch=batch, sample=None, img=img, feats=feats, depth=depth,
                 depthnet=depthnet, cam_bev=cam_bev, lidar_bev=lidar_bev,
@@ -339,14 +299,13 @@ def export_scn_onnx(model, save):
 class OnnxExporter:
     """Export the module-split ONNX graphs and verify them against torch."""
 
-    def __init__(self, model, task, outdir, opset=17):
+    def __init__(self, model, outdir, opset=17):
         self.model = model
-        self.task = task
         self.outdir = outdir
         self.opset = opset
-        self.io = IO_MAP[task]
+        self.io = BF_IO
         self.wrappers = {
-            name: WRAPPERS[task][name][0](model)
+            name: WRAPPERS[name][0](model)
             for name in self.io
         }
         self.in_names = {name: io[0] for name, io in self.io.items()}
@@ -362,7 +321,7 @@ class OnnxExporter:
             path = osp.join(self.outdir, f"{name}.onnx")
             with torch.no_grad():
                 torch.onnx.export(
-                    self.wrappers[name], graph_args(name, inp, self.task), path,
+                    self.wrappers[name], graph_args(name, inp), path,
                     opset_version=self.opset,
                     input_names=self.in_names[name],
                     output_names=self.out_names[name],
@@ -383,10 +342,10 @@ class OnnxExporter:
                                         providers=["CPUExecutionProvider"])
             feeds = {n: a.detach().cpu().numpy()
                      for n, a in zip(self.in_names[name],
-                                     graph_args(name, inp, self.task))}
+                                     graph_args(name, inp))}
             outs = sess.run(None, feeds)
             with torch.no_grad():
-                refs = self.wrappers[name](*graph_args(name, inp, self.task))
+                refs = self.wrappers[name](*graph_args(name, inp))
             refs = refs if isinstance(refs, (tuple, list)) else (refs,)
             worst = 0.0
             for o, r in zip(outs, refs):
@@ -404,7 +363,7 @@ class OnnxExporter:
 
     def run(self, cfg, verify=True):
         """Sample inputs -> export all graphs -> optional verify."""
-        inp = _sample_inputs(cfg, self.model, self.task)
+        inp = _sample_inputs(cfg, self.model)
         paths = self.export(inp)
         print("[export] onnx:", paths)
         if verify:
@@ -416,7 +375,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("config")
     ap.add_argument("checkpoint")
-    ap.add_argument("--task", default="det", choices=["det", "seg"])
     ap.add_argument("--opset", type=int, default=17)
     ap.add_argument("--outdir", default=osp.join("outputs", "onnx"),
                     help="ONNX 输出目录（det: BF 结构，与 CUDA-BEVFusion 一致）")
@@ -432,10 +390,10 @@ def main():
     load_model_checkpoint(model, args.checkpoint, strict=True)
 
     os.makedirs(args.outdir, exist_ok=True)
-    paths = OnnxExporter(model, args.task, args.outdir,
+    paths = OnnxExporter(model, args.outdir,
                          opset=args.opset).run(cfg, verify=args.verify)
 
-    # SCN 稀疏编码器（lidar.backbone.xyz.onnx，det/seg 都有 lidar 链）
+    # SCN 稀疏编码器（lidar.backbone.xyz.onnx）
     scn_path = osp.join(args.outdir, SCN_ONNX_NAME)
     export_scn_onnx(model, scn_path)
     print("[export] scn:", scn_path)
