@@ -239,12 +239,12 @@ def _sample_inputs(cfg, model):
         feats = CamBackbone(model)(img)
         depth = torch.rand(1, 6, 1, 256, 704, device=dev, dtype=dt)
         depthnet = CamVtransformDet(model)(feats, depth)
-        eye4 = torch.eye(4, device=dev, dtype=torch.float32)
+        eye4 = torch.eye(4, device=dev, dtype=torch.float32).view(1, 1, 4, 4)
         batch = {
-            "camera2lidar": eye4.unsqueeze(0).repeat(6, 1, 1),
-            "camera_intrinsics": eye4.unsqueeze(0).repeat(6, 1, 1),
-            "img_aug_matrix": eye4.unsqueeze(0).repeat(6, 1, 1),
-            "lidar_aug_matrix": eye4.unsqueeze(0).repeat(6, 1, 1),
+            "camera2lidar": eye4.repeat(1, 6, 1, 1),
+            "camera_intrinsics": eye4.repeat(1, 6, 1, 1),
+            "img_aug_matrix": eye4.repeat(1, 6, 1, 1),
+            "lidar_aug_matrix": eye4.repeat(1, 6, 1, 1),
         }
         lidar_bev = torch.randn(1, 256, 180, 180, device=dev, dtype=dt)
         # bev_pool 输出（DownsampleBf 输入，360x360）
