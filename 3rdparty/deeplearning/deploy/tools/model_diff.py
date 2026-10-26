@@ -76,7 +76,7 @@ def project_depth(batch, vt):
     return depth
 
 
-def backend_torch(cfg, ckpt, dump_dir, sample_index=0):
+def backend_torch(cfg, ckpt, dump_dir, sample_index=0, cpp_dir="outputs/model_diff/cpp"):
     from scripts.config import load_config
     from models import build_model
     from scripts.trainer import load_model_checkpoint, to_device
@@ -135,6 +135,13 @@ def backend_torch(cfg, ckpt, dump_dir, sample_index=0):
     batch_size = coords[-1, 0] + 1
     lidar_bev = model.encoders["lidar"]["backbone"](feats_l, coords, batch_size, sizes=sizes)
     dump("lidar_bev", half(lidar_bev), dump_dir, "torch")
+    # voxelize 输出落盘（save_tensor 格式）→ C++ 侧 BEVFUSION_DUMP_DIR 读到后
+    # override 引擎输入，隔离"voxelize 差异 vs SCN 引擎差异"。
+    # coords 为 mmcv 惯例 [batch, z, y, x]，C++ 引擎期望 [batch, x, y, z]，C++ 侧转换。
+    dump_bf_tensor(coords.detach().cpu().numpy().astype(np.int32),
+                   os.path.join(cpp_dir, "torch_lidar_coords"))
+    dump_bf_tensor(feats_l.detach().cpu().numpy().astype(np.float16),
+                   os.path.join(cpp_dir, "torch_lidar_feats"))
 
     # 4. fuser + decoder
     middle = FuserDecoder(model)(cam_bev, lidar_bev)  # (B,512,180,180)
@@ -467,7 +474,7 @@ def main():
     model = None
     if args.backend in ("torch", "all"):
         assert args.config and args.ckpt, "torch 后端需要 config + ckpt"
-        model = backend_torch(args.config, args.ckpt, args.dump_dir, args.sample_index)
+        model = backend_torch(args.config, args.ckpt, args.dump_dir, args.sample_index, args.cpp_dir)
     if args.backend in ("onnx", "all"):
         backend_onnx(args.onnx_dir, args.dump_dir)
     if args.backend in ("trt", "all"):
