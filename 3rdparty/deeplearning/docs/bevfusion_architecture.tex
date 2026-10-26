@@ -49,7 +49,7 @@
 \draw[arr] (pool) -- (down);
 
 % ------------------------------------------------------------------ lidar
-\node[lid] (vox)   at (3.2,2.6)  {Voxelize\\0.075 m $\cdot$ 1440$\times$1440$\times$41};
+\node[lid] (vox)   at (3.2,2.6)  {Voxelize\\0.075 m (xy) $\cdot$ 0.2 m (z)};
 \node[lid] (scn)   at (6.9,2.6)  {SparseEncoder\\stages 16-32-64-128};
 \node[lid] (cout)  at (10.6,2.6) {conv\_out\\$k(1,1,3)$ $s(1,1,2)$};
 \node[lid] (dense) at (14.3,2.6) {scatter $\to$ dense\\256$\times$180$\times$180};
@@ -94,7 +94,7 @@
 \node[anchor=north west, font=\scriptsize, text=mutA, align=left] at (-1.3,0.35)
   {Dashed frames = deployment units.  TRT plans: camera.backbone / camera.vtransform / fuser / head.bbox;\\
    SCN runs as a libspconv ONNX engine; bev\_pool, voxelize and box decode are C++ CUDA kernels.\\
-   BEV: $\pm$54 m, 180$\times$180 output grid; LiDAR voxel 0.075 m; camera input 6$\times$256$\times$704.};
+   BEV: $\pm$54 m, 180$\times$180 output grid; LiDAR voxel xy 0.075 m / z 0.2 m; camera input 6$\times$256$\times$704.};
 
 % ------------------------------------------------------------------ legend
 \begin{scope}[shift={(26.0,-0.35)}]

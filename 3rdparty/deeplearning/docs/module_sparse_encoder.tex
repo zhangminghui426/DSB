@@ -69,8 +69,8 @@
 
 % ---------------------------------------------------------------- notes
 \node[note, anchor=north west, text width=26cm] at (-1.6,2.6)
-  {Coordinates are (batch, x, y, z) with spatial shape $1440\times1440\times41$ (det, 0.075 m)
-   or $1024\times1024\times41$ (seg, 0.1 m). Stage strides halve x/y/z (41$\to$21$\to$11$\to$5),
+  {Coordinates are (batch, x, y, z) with spatial shape $1440\times1440\times41$ (det: xy 0.075 m, z 0.2 m)
+   or $1024\times1024\times41$ (seg: xy 0.1 m, z 0.2 m). Stage strides halve x/y/z (41$\to$21$\to$11$\to$5),
    conv\_out halves z again (5$\to$2); Z is folded into channels, so the LiDAR BEV feature is
    128$\times$2 = 256 channels.};
 

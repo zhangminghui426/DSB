@@ -28,7 +28,7 @@
 \node[cam] (vt)   at (8.8,17) {DepthLSS / LSS\\view transform};
 \node[io]  (cam_bev) at (13.2,17) {camera BEV\\80$\times$180$\times$180};
 
-\node[lid] (vox)  at (4.6,8) {Voxelize\\0.075 m};
+\node[lid] (vox)  at (4.6,8) {Voxelize\\0.075 m (xy) $\cdot$ 0.2 m (z)};
 \node[lid] (scn)  at (8.8,8) {SparseEncoder\\spconv};
 \node[io]  (lid_bev) at (13.2,8) {LiDAR BEV\\256$\times$180$\times$180};
 
@@ -95,7 +95,7 @@
 
 \node[hdr] at (2.8,21.2) {DSB perception: BEVFusion (detection + BEV segmentation) and FlashOCC (occupancy)};
 \node[note, anchor=north west, text width=28cm] at (-1.6,-3.0)
-  {Grids: det 0.075 m voxel / 180$\times$180 BEV; seg 0.1 m voxel / 128$\times$128 BEV (+ 200$\times$200 map @ 0.5 m);
+  {Grids: det 0.075$\times$0.075$\times$0.2 m voxel / 180$\times$180 BEV; seg 0.1$\times$0.1$\times$0.2 m voxel / 128$\times$128 BEV (+ 200$\times$200 map @ 0.5 m);
    occ 0.4 m / 200$\times$200$\times$16 occupancy. BEVFusion uses LiDAR + 6 cameras; FlashOCC is camera-only.};
 \node[note, anchor=north west, text width=20cm] at (2.8,20.6)
   {BEVFusion: camera Swin-T + LSS/DepthLSS, LiDAR SparseEncoder, ConvFuser; det head TransFusion, seg head 6-class BEV.
