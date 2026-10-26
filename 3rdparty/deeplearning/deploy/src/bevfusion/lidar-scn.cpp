@@ -28,6 +28,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #include "common/check.hpp"
@@ -80,7 +81,8 @@ class SCNImplement : public SCN {
     voxelization_ = create_voxelization(param_.voxelization);
     if (voxelization_ == nullptr) return false;
 
-    native_scn_ = spconv::load_engine_from_onnx(param_.model, static_cast<spconv::Precision>(param_.precision));
+    native_scn_ = spconv::load_engine_from_onnx(
+        param_.model, static_cast<spconv::Precision>(param_.precision));
     return native_scn_ != nullptr;
   }
 
@@ -105,6 +107,12 @@ class SCNImplement : public SCN {
     }
     native_scn_->input(0)->set_grid_size(voxelization_->grid_size());
     native_scn_->forward(stream);
+    if (getenv("BEVFUSION_SCN_DEBUG")) {
+      auto s = shape();
+      printf("[scn] output shape:");
+      for (auto v : s) printf(" %lld", (long long)v);
+      printf("\n");
+    }
     return native_scn_->output(0)->features().ptr<nvtype::half>();
   }
 
@@ -114,7 +122,8 @@ class SCNImplement : public SCN {
 
  private:
   // 读 BEVFUSION_DUMP_DIR/torch_lidar_coords(+feats)（save_tensor 格式）。
-  // torch coords 为 [batch,z,y,x]（mmcv 惯例），引擎期望 [batch,x,y,z]，这里转换。
+  // 本仓库 sparse encoder 的 coords 已是 [batch,x,y,z]（与 C++ XYZ voxelize
+  // 一致），直接喂引擎，不再做轴变换。
   bool try_load_override_(void* stream) {
     const char* dir = getenv("BEVFUSION_DUMP_DIR");
     if (!dir) return false;
@@ -145,10 +154,21 @@ class SCNImplement : public SCN {
       printf("[override] 尺寸不符 coords=%dx%d feats=%dx%d，跳过\n", M, Dc, Mf, Df);
       return false;
     }
-    // [batch,z,y,x] -> [batch,x,y,z]
-    for (int i = 0; i < M; ++i) {
-      int b = hcoords[i * 4 + 0], z = hcoords[i * 4 + 1], y = hcoords[i * 4 + 2], x = hcoords[i * 4 + 3];
-      hcoords[i * 4 + 0] = b; hcoords[i * 4 + 1] = x; hcoords[i * 4 + 2] = y; hcoords[i * 4 + 3] = z;
+    // coords 已是 [batch,x,y,z]（本仓库 sparse encoder 约定），默认原样使用。
+    // 调试可用 BEVFUSION_COORD_PERM=zyx 等 3 字符排列做轴变换（第 j 位输出
+    // 取原第 perm[j] 轴），用于定位引擎坐标序约定。
+    const char* perm = getenv("BEVFUSION_COORD_PERM");
+    if (perm != nullptr && strlen(perm) == 3 &&
+        perm[0] >= '0' && perm[0] <= '2' && perm[1] >= '0' && perm[1] <= '2' &&
+        perm[2] >= '0' && perm[2] <= '2') {
+      for (int i = 0; i < M; ++i) {
+        int c0 = hcoords[i * 4 + 1 + (perm[0] - '0')];
+        int c1 = hcoords[i * 4 + 1 + (perm[1] - '0')];
+        int c2 = hcoords[i * 4 + 1 + (perm[2] - '0')];
+        hcoords[i * 4 + 1] = c0;
+        hcoords[i * 4 + 2] = c1;
+        hcoords[i * 4 + 3] = c2;
+      }
     }
     cudaStream_t s = (cudaStream_t)stream;
     if (!override_coords_dev_) checkRuntime(cudaMalloc(&override_coords_dev_, (size_t)M * 4 * sizeof(int)));

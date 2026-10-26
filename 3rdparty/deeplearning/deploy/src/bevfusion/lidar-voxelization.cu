@@ -47,11 +47,17 @@ namespace lidar {
 // 保持输入顺序 → 取前 max_points 个点算均值。与 torch 逐 voxel 对齐。
 // ---------------------------------------------------------------------------
 
-// pass1：计算 voxel key 并压缩有效点（keys/idxs 保留输入 index 顺序信息）
+// pass1：计算 voxel key。按输入 index 原位写 keys/idxs（无效点写哨兵 key），
+// 之后的 stable_sort_by_key 才能保证同一 voxel 内仍是输入点序。
+// 注意：不能先用 atomicAdd 压缩再排序——压缩顺序由并发决定，组内点序会乱，
+// 导致每个 voxel 取前 max_points 个点的结果与 mmcv deterministic 不一致
+// （实测 intensity 均值最大偏 20，SCN 输出随之发散）。
 __global__ void voxel_key_kernel(size_t num_points, const half* points, VoxelizationParameter param,
                                  uint64_t* keys, int* idxs, unsigned int* valid) {
   int i = cuda_linear_index;
   if (i >= (int)num_points) return;
+  keys[i] = 0xFFFFFFFFFFFFFFFFull;  // 无效点哨兵（排序后落在末尾）
+  idxs[i] = i;
   const half* p = points + (size_t)i * param.num_feature;
   float px = __half2float(p[0]), py = __half2float(p[1]), pz = __half2float(p[2]);
   if (px < param.min_range.x || px >= param.max_range.x || py < param.min_range.y || py >= param.max_range.y ||
@@ -61,10 +67,9 @@ __global__ void voxel_key_kernel(size_t num_points, const half* points, Voxeliza
   int y = (int)floorf((py - param.min_range.y) / param.voxel_size.y);
   int z = (int)floorf((pz - param.min_range.z) / param.voxel_size.z);
   if (x < 0 || x >= param.grid_size.x || y < 0 || y >= param.grid_size.y || z < 0 || z >= param.grid_size.z) return;
-  unsigned int pos = atomicAdd(valid, 1u);
-  keys[pos] = (uint64_t)z * (uint64_t)param.grid_size.y * (uint64_t)param.grid_size.x +
-              (uint64_t)y * (uint64_t)param.grid_size.x + (uint64_t)x;
-  idxs[pos] = i;
+  keys[i] = (uint64_t)z * (uint64_t)param.grid_size.y * (uint64_t)param.grid_size.x +
+            (uint64_t)y * (uint64_t)param.grid_size.x + (uint64_t)x;
+  atomicAdd(valid, 1u);
 }
 
 // pass3：start[i] = (i==0) ? 0 : ends[i-1]
@@ -163,10 +168,12 @@ class VoxelizationImplement : public Voxelization {
     unsigned int valid = *h_valid_;
     if (valid == 0) return;
 
-    // stable sort：按 voxel key 升序，组内保持输入 index 顺序（= mmcv 点序）
+    // stable sort：按 voxel key 升序；keys/idxs 按输入 index 原位写入，
+    // 因此同一 voxel 内自然保持输入 index 顺序（= mmcv deterministic 点序）。
+    // 排序范围是全部 num_points（含末尾哨兵），前 valid 个即有效点。
     thrust::device_ptr<uint64_t> dk(d_keys_);
     thrust::device_ptr<int> di(d_idxs_);
-    thrust::stable_sort_by_key(dk, dk + valid, di);
+    thrust::stable_sort_by_key(dk, dk + num_points, di);
 
     // 唯一 voxel key + 每 voxel 组范围（[starts, ends)）
     int num_voxels = (int)(thrust::unique_copy(dk, dk + valid, thrust::device_ptr<uint64_t>(d_voxel_keys_)) -

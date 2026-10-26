@@ -236,7 +236,8 @@ def backend_torch(cfg, ckpt, dump_dir, sample_index=0, cpp_dir="outputs/model_di
     dump("lidar_bev", half(lidar_bev), dump_dir, "torch")
     # voxelize 输出落盘（save_tensor 格式）→ C++ 侧 BEVFUSION_DUMP_DIR 读到后
     # override 引擎输入，隔离"voxelize 差异 vs SCN 引擎差异"。
-    # coords 为 mmcv 惯例 [batch, z, y, x]，C++ 引擎期望 [batch, x, y, z]，C++ 侧转换。
+    # 本仓库 sparse encoder 的 coords 为 [batch, x, y, z]（与 C++ XYZ voxelize
+    # 一致），C++ 侧原样使用，不再做轴变换。
     dump_bf_tensor(coords.detach().cpu().numpy().astype(np.int32),
                    os.path.join(cpp_dir, "torch_lidar_coords"))
     dump_bf_tensor(feats_l.detach().cpu().numpy().astype(np.float16),

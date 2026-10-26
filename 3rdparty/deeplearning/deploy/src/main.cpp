@@ -174,8 +174,15 @@ std::shared_ptr<bevfusion::Core> create_core(const std::string& model, const std
 
   bevfusion::lidar::SCNParameter scn;
   scn.voxelization = voxelization;
-  scn.model = nv::format("model/%s/lidar.backbone.xyz.onnx", model.c_str());
-  scn.order = bevfusion::lidar::CoordinateOrder::XYZ;
+  // 调试：BEVFUSION_SCN_ONNX 可指定 SCN onnx（对比 inverse=False/True 导出）
+  const char* scn_onnx = getenv("BEVFUSION_SCN_ONNX");
+  scn.model = scn_onnx != nullptr ? scn_onnx
+                                  : nv::format("model/%s/lidar.backbone.xyz.onnx", model.c_str());
+  // 调试：BEVFUSION_SCN_ORDER=ZYX 切换体素索引序（默认 XYZ）
+  const char* scn_order = getenv("BEVFUSION_SCN_ORDER");
+  scn.order = (scn_order != nullptr && strcmp(scn_order, "ZYX") == 0)
+                  ? bevfusion::lidar::CoordinateOrder::ZYX
+                  : bevfusion::lidar::CoordinateOrder::XYZ;
 
   if (precision == "int8") {
     scn.precision = bevfusion::lidar::Precision::Int8;
