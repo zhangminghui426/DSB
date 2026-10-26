@@ -77,6 +77,23 @@ file(GLOB_RECURSE VISUALIZE_FILES
   ${BEVFUSION_ROOT}/src/common/visualize.cu
 )
 
+# ---- CUDA host compiler：必须位于 enable_language(CUDA) 之前 -------------
+# nvcc 与过新的 GCC（14+ 的 libstdc++ _Float128 模板）不兼容会报
+# "math.h:1418 error: template argument 1 is invalid"。显式选一个 nvcc
+# 支持的 g++（CUDA 12.8 官方支持 GCC 上限 13），找不到则保持默认。
+if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
+  set(_cuda_host_candidates g++-13 g++-12 g++-11 g++-10)
+  foreach(_h IN LISTS _cuda_host_candidates)
+    find_program(_host_cxx NAMES ${_h})
+    if(_host_cxx)
+      message(STATUS "CUDA host compiler: ${_host_cxx}")
+      set(CMAKE_CUDA_HOST_COMPILER ${_host_cxx})
+      break()
+    endif()
+    unset(_host_cxx CACHE)
+  endforeach()
+endif()
+
 enable_language(CUDA)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
