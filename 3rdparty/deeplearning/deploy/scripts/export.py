@@ -12,8 +12,9 @@ det 按 CUDA-BEVFusion（NVIDIA-AI-IOT/Lidar_AI_Solution）模块切分（BF 结
   lidar.backbone.xyz(voxels, coors) -> lidar_bev（libspconv 自定义稀疏算子）
 每个 dense 图都可被 TRT 直接解析（SCN 除外，走 libspconv 引擎）。
 
-SCN 还会自动拆成 layers/conv{0..20}.onnx：libspconv 单 graph 串联多个
-SparseConvolution 时对稀疏邻域会算错，逐 conv 执行才能与 torch 对齐。
+SCN 导出时把 BN 与 ReLU 都融合进 SparseConvolution（activation 属性），与
+CUDA-BEVFusion 的 layer_fusion 一致；ReLU 若留成独立 Relu 节点，libspconv
+会算错稀疏邻域。
 
 Usage（run from the model repo root 3rdparty/deeplearning）:
   python deploy/scripts/export.py CONFIG CHECKPOINT --verify
@@ -284,8 +285,12 @@ def export_scn_onnx(model, save):
     """稀疏编码器 -> lidar.backbone.xyz.onnx（3DSparseConvolution 自定义算子图）。
 
     voxels(1,5) + coors(1,4) 单点占位 trace，权重来自 checkpoint。
-    FP 模型需要先 layer_fusion_bn 把 conv+bn 融合进卷积权重，否则 trace 时
-    BN 输出 tensor 无法注册（残差加法 get_tensor_id 断言失败）。
+
+    必须用 layer_fusion_bn_relu（与 CUDA-BEVFusion 的 funcs.layer_fusion 一致）：
+      - conv+bn 融合进权重，否则 trace 时 BN 输出 tensor 无法注册；
+      - ReLU 写进 conv 的 activation 属性。若把 ReLU 留成图里的独立 Relu
+        节点，libspconv 在该结构下会算错稀疏邻域，导致 lidar_bev 与 torch
+        严重不符（NVIDIA export-scn.py 的 --inferonly 注释也提到该问题）。
     xyz 布局（inverse=False）：libspconv 期望 OKI (Cout,Kz,Ky,Kx,Cin)；
     本仓库 spconv 2.x 权重原样导出。
     """
@@ -293,50 +298,10 @@ def export_scn_onnx(model, save):
 
     backbone = model.encoders["lidar"]["backbone"]
     backbone.eval().half()
-    funcs.layer_fusion_bn(backbone)
+    funcs.layer_fusion_bn_relu(backbone)
     voxels = torch.zeros(1, 5, dtype=torch.float16, device="cuda")
     coors = torch.zeros(1, 4, dtype=torch.int32, device="cuda")
     exptool.export_onnx(backbone, voxels, coors, 1, False, save)
-
-
-def split_scn_layers(scn_onnx, outdir):
-    """把完整 SCN ONNX 拆成逐 conv 的单算子 ONNX（C++ per-layer 模式）。
-
-    libspconv 在同一个 engine 里串联多个 SparseConvolution 时，对稀疏邻域
-    （缺失邻居）会算错；逐 conv 单独建 engine 再串联则与 torch 对齐
-    （lidar_bev corr ~0.99996）。C++ 侧 lidar-scn.cpp 会优先加载
-    <scn_dir>/layers/conv{0..20}.onnx。
-    """
-    import onnx
-
-    m = onnx.load(scn_onnx)
-    os.makedirs(outdir, exist_ok=True)
-    count = 0
-    for node in m.graph.node:
-        if node.op_type != "SparseConvolution":
-            continue
-        attrs = {a.name: onnx.helper.get_attribute_value(a) for a in node.attribute}
-        cin = int(attrs["in_channels"])
-        cout = int(attrs["out_channels"])
-        inp = onnx.helper.make_value_info(
-            name="0",
-            type_proto=onnx.helper.make_tensor_type_proto(
-                elem_type=onnx.TensorProto.FLOAT16, shape=[1, cin]))
-        out = onnx.helper.make_value_info(
-            name=node.output[0],
-            type_proto=onnx.helper.make_tensor_type_proto(
-                elem_type=onnx.TensorProto.FLOAT16, shape=[1, cout]))
-        new_node = onnx.helper.make_node(
-            "SparseConvolution", ["0", node.input[1], node.input[2]],
-            [node.output[0]], node.name, **attrs)
-        inits = [i for i in m.graph.initializer
-                 if i.name in (node.input[1], node.input[2])]
-        graph = onnx.helper.make_graph([new_node], node.name, [inp], [out], inits)
-        model = onnx.helper.make_model(
-            graph, opset_imports=list(m.opset_import), producer_name="dsb-scn-split")
-        onnx.save(model, osp.join(outdir, f"{node.name}.onnx"))
-        count += 1
-    print(f"[export] SCN per-layer onnx: {count} -> {outdir}")
 
 
 # ------------------------------------------------------------------ 导出
@@ -437,11 +402,10 @@ def main():
     paths = OnnxExporter(model, args.outdir,
                          opset=args.opset).run(cfg, verify=args.verify)
 
-    # SCN 稀疏编码器（lidar.backbone.xyz.onnx）+ 逐 conv 拆分（C++ per-layer）
+    # SCN 稀疏编码器（lidar.backbone.xyz.onnx）
     scn_path = osp.join(args.outdir, SCN_ONNX_NAME)
     export_scn_onnx(model, scn_path)
     print("[export] scn:", scn_path)
-    split_scn_layers(scn_path, osp.join(osp.dirname(scn_path), "layers"))
 
     print()
     print("[export] TRT engine 一律用 deploy/build_trt_engine.sh 构建：")

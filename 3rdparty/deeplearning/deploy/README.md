@@ -20,12 +20,12 @@ deploy/
 ├── libs/                # 第三方库（libspconv / cuosd / spconv-onnx / stb）
 ├── model/               # 引擎/ONNX（<name>/build/*.plan + <name>/lidar.backbone.xyz.onnx）
 ├── tool/                # 工具（environment.sh / run.sh + model_diff.py 等 Python 工具）
-└── lean/                # SCN onnx 导出库（符号 trace / BN 融合 / inverse 支持）
+└── lean/                # SCN onnx 导出库（符号 trace / BN+ReLU 融合 / inverse 支持）
 ```
 
 ## 使用流程
 
-1. 导出模型 onnx（Python，5 个 onnx + SCN 逐 conv layers/ → outputs/onnx/）：
+1. 导出模型 onnx（Python，5 个 onnx → outputs/onnx/）：
    ```bash
    cd 3rdparty/deeplearning
    python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx --verify
@@ -37,7 +37,6 @@ deploy/
    cp outputs/onnx/camera.backbone.onnx outputs/onnx/camera.vtransform.onnx \
       outputs/onnx/fuser.onnx outputs/onnx/head.bbox.onnx deploy/model/resnet50/
    cp outputs/onnx/lidar.backbone.xyz.onnx deploy/model/resnet50/
-   cp -r outputs/onnx/layers deploy/model/resnet50/   # C++ per-layer SCN 使用
    DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
    ```
 3. 生成 example-data 输入：python deploy/tool/export_example_data.py（见脚本 docstring）
@@ -59,21 +58,18 @@ deploy/
 - deploy/model/<name>/build/：4 个 .plan（camera.backbone / camera.vtransform / fuser /
   head.bbox.fp32，IO 均为 fp16:chw；head.bbox 用 fp32 层以规避 TRT fp16
   数值 bug，构建脚本已自动处理）
-- deploy/model/<name>/layers/：SCN 逐 conv 拆分（conv0..conv20.onnx），供
-  C++ per-layer 模式使用；`export.py` 导出完整 SCN 后自动生成
 
-## SCN 执行模式（per-layer，规避 libspconv 稀疏邻域 bug）
+## SCN 导出注意（ReLU 必须融合进卷积）
 
-libspconv 在同一个 engine 图里串联多个 `SparseConvolution` 时，对稀疏邻域
-（3x3x3 邻居缺失）会算错：完整 SCN 的 `lidar_bev` 与 torch 相关度仅 ~0.13，
-检测框发散且同输入多次运行不稳定。逐 conv 单独建 engine、主机侧执行
-ReLU/残差 Add，结果与 torch 对齐（`lidar_bev` corr ~0.99996，检测框位置差
-~1-2cm）。
+libspconv 的 ONNX 引擎按 NVIDIA 导出的结构执行稀疏图：`SparseConvolution`
+节点的 `activation` 属性带 ReLU。若导出时把 ReLU 留成图里的独立 `Relu`
+节点（即只做 BN 融合、不做 ReLU 融合），libspconv 会算错稀疏邻域——完整
+SCN 的 `lidar_bev` 与 torch 严重不符、检测框发散且同输入多次运行不稳定。
 
-- 默认行为：`<scn_dir>/layers/conv0.onnx` 存在时自动启用 per-layer；
-  缺失时回退单 graph。
-- `BEVFUSION_SCN_PER_LAYER=1` 强制 per-layer，`=0` 强制单 graph。
-- `BEVFUSION_SCN_LAYERS_DIR` 可覆盖 layers 目录。
+`export.py` 用 `funcs.layer_fusion_bn_relu`（对应 CUDA-BEVFusion 的
+`funcs.layer_fusion`）同时融合 BN 与 ReLU，与 NVIDIA 的
+`lidar.backbone.xyz.onnx` 结构一致。C++ 侧因此只需参考实现那套单 engine
+调用（`src/bevfusion/lidar-scn.cpp`）。
 
 ## 自定义算子归属
 

@@ -30,6 +30,10 @@ def _is_sparse_basic_block(module):
     return isinstance(module, _SparseBasicBlock())
 
 import spconv.pytorch as spconv
+import cumm.tensorview as tv
+
+# spconv 2.x 的 act_type 是 cumm 枚举（NVIDIA 原版用的是字符串，仅其 fork 支持）
+ACT_RELU = tv.gemm.Activation.ReLU
 
 from .quantize import QuantAdd, SparseConvolutionQunat
 import numpy as np
@@ -148,7 +152,7 @@ def fuse_sparse_basic_block(self, is_fuse_bn = False, is_fuse_relu=True):
         self.forward.is_fuse_relu = is_fuse_relu
 
     if is_fuse_relu == True:
-        self.conv1.act_type = "ReLU"
+        self.conv1.act_type = ACT_RELU
 
     if is_fuse_bn == True:
         fuse_bn(self.conv1, self.bn1)
@@ -206,7 +210,7 @@ def fuse_relu_only(model):
         if isinstance(module, spconv.SparseSequential):
             if isinstance(module[0], spconv.conv.SparseConvolution) :
                 c, r = [module[i] for i in range(2)]
-                c.act_type = "ReLU"
+                c.act_type = ACT_RELU
                 set_attr_by_path(model, name, c)
         elif _is_sparse_basic_block(module):
             fuse_sparse_basic_block(module, is_fuse_bn= False, is_fuse_relu= True)
@@ -235,7 +239,7 @@ def layer_fusion_bn_relu(model):
             if isinstance(module[0], spconv.SubMConv3d) or isinstance(module[0], spconv.SparseConv3d):
                 c, b, r = [module[i] for i in range(3)]
                 fuse_bn(c, b)
-                c.act_type = "ReLU"
+                c.act_type = ACT_RELU
                 set_attr_by_path(model, name, c)
         elif _is_sparse_basic_block(module):
             fuse_sparse_basic_block(module, is_fuse_bn= True, is_fuse_relu= True)

@@ -58,8 +58,8 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 # 1) 导出分模块 ONNX（5 张图，含 SCN；--verify 用 onnxruntime 逐图校验）
 python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --verify
 
-# 2) 拷贝 ONNX + layers/ 到 deploy/model/resnet50/ 并构建 TRT engine
-#    （head.bbox 自动用 fp32 层构建为 head.bbox.fp32.plan；layers/ 供 per-layer SCN）
+# 2) 拷贝 ONNX 到 deploy/model/resnet50/ 并构建 TRT engine
+#    （head.bbox 自动用 fp32 层构建为 head.bbox.fp32.plan）
 DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 
 # 3) 生成 C++ 输入（6 相机 jpg + 矩阵/点云 tensor）
@@ -94,4 +94,4 @@ cd 3rdparty/deeplearning/models/calib_board_detector && python train.py
 
 - BEV 3D 目标检测（mini-val NDS/mAP 0.585）、语义分割（mean IoU@max 0.718）、占据网络（mIoU 24.09）
 - 标定板自动检测（SECOND 3D 检测器）、雷达-相机外参标定（fast_calib）、Streamlit 可视化界面
-- C++ TRT 推理端到端（per-layer SCN）：检测框与 torch 参考位置差 ~1–2cm，运行稳定
+- C++ TRT 推理端到端：检测框与 torch 参考位置差 ~1–2cm，运行稳定
