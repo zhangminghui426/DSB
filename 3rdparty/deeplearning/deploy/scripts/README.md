@@ -1,6 +1,6 @@
-# Python 导出/校验（deploy/python/）
+# 导出链常量包（deploy/scripts/）
 
-C++ 推理前置：模型导出 + engine 构建。推理本体在 deploy/cpp/（CUDA-BEVFusion 移植）。
+C++ 推理前置：模型导出 + engine 构建。推理本体在 deploy/src/（CUDA-BEVFusion 移植）。
 本目录负责把训练侧模型按 CUDA-BEVFusion 模型结构导出为 5 个 onnx；
 engine 构建统一走 CUDA-BEVFusion 原版脚本 deploy/build_trt_engine.sh（Python/C++ 共用）。
 
@@ -22,7 +22,7 @@ deploy/
 
 ## 导出模型结构
 
-5 个 onnx 与 CUDA-BEVFusion 完全对齐（engine 绑定名与 deploy/cpp/src/main.cpp
+5 个 onnx 与 CUDA-BEVFusion 完全对齐（engine 绑定名与 deploy/src/main.cpp
 create_core 一致）：
 
 | onnx | 输入 → 输出 | 说明 |
@@ -74,6 +74,6 @@ camera.vtransform / fuser / head.bbox）。
 
 ## 模型布局
 
-engine 命名与 deploy/cpp/src/main.cpp 读取路径一致（model/<name>/build/*.plan），
+engine 命名与 deploy/src/main.cpp 读取路径一致（model/<name>/build/*.plan），
 lidar.backbone.xyz.onnx 直接放 model/<name>/，放置方法见
 [cpp/README.md#模型布局](../cpp/README.md#模型布局)。

@@ -7,7 +7,7 @@ project(bevfusion LANGUAGES CXX)
 # 配置：TENSORRT_ROOT、CUDA_ROOT、CUDNN_ROOT（或直接环境变量），
 #       SPCONV_CUDA_VERSION（默认 12.8，对应 libs/libspconv/lib/x86_64_cuda12.8）。
 # 运行：
-#   cd 3rdparty/deeplearning/deploy/cpp && mkdir -p build && cd build
+#   cd 3rdparty/deeplearning/deploy && mkdir -p build && cd build
 #   cmake .. && make -j$(nproc)
 # 产物：build/bevfusion + build/custom_layernorm.so（TRT plugin，main 内 dlopen）
 # =====================================================================
@@ -51,8 +51,7 @@ message(STATUS "libspconv: ${spconv_lib}")
 include_directories(
   ${BEVFUSION_ROOT}/src
   ${BEVFUSION_ROOT}/src/common
-  ${BEVFUSION_ROOT}/dependencies/stb
-  ${BEVFUSION_ROOT}/dependencies/dlpack/include
+  ${BEVFUSION_ROOT}/libs/stb
   ${BEVFUSION_ROOT}/libs/cuosd
   ${spconv_include}
   ${TENSORRT_ROOT}/include

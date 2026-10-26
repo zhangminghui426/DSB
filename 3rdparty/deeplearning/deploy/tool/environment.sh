@@ -1,5 +1,5 @@
-# CUDA-BEVFusion 推理环境（DSB/3rdparty/deeplearning/deploy/cpp）
-# 用法：. tool/environment.sh
+# CUDA-BEVFusion 推理环境（DSB/3rdparty/deeplearning/deploy，扁平布局）
+# 用法：. tool/environment.sh（cwd 任意，BEVFUSION_DIR 以脚本位置定）
 # 按实际安装路径修改下方 *_Root 变量。
 
 # TensorRT（用户环境：/opt/TensorRT-10.9.0.34）
@@ -26,8 +26,9 @@ export ConfigurationStatus=Success
 
 # 模型/数据目录（相对 3rdparty/deeplearning）
 export BEVFUSION_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+export LD_LIBRARY_PATH=${BEVFUSION_DIR}/build:$LD_LIBRARY_PATH  # custom_layernorm.so（main dlopen）
 export MODEL_DIR=${MODEL_DIR:-${BEVFUSION_DIR}/model}
-export DATA_DIR=${DATA_DIR:-${BEVFUSION_DIR}/example-data}
+export DATA_DIR=${DATA_DIR:-${BEVFUSION_DIR}/../outputs/example-data}
 
 echo "[env] TensorRT=${TensorRT_Root} CUDA=${CUDA_Root} SPCONV=${SPCONV_CUDA_VERSION}"
 echo "[env] model=${MODEL_DIR} data=${DATA_DIR}"

@@ -204,7 +204,7 @@ std::shared_ptr<bevfusion::Core> create_core(const std::string& model, const std
   // head.bbox 必须用 fp32 层构建（不加 --fp16）：fp16 构建（myelin/layernormplugin）
   // 有 TRT 数值 bug，reg 偏差 68~133（三端对拍定位）；fp32 层引擎 max_abs<=0.14，
   // 框与 torch 完全对齐。构建：
-  //   trtexec --onnx=outputs/onnx_bf/head.bbox.onnx \
+  //   trtexec --onnx=outputs/onnx/head.bbox.onnx \
   //     --inputIOFormats=fp16:chw --outputIOFormats=fp16:chw \
   //     --saveEngine=model/resnet50/build/head.bbox.fp32.plan
   transbbox.model = nv::format("model/%s/build/head.bbox.fp32.plan", model.c_str());

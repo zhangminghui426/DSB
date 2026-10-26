@@ -1,6 +1,6 @@
 """Split-module ONNX export for BEVFusion det / seg（唯一 ONNX 导出脚本）。
 
-【部署前置步骤】C++ 推理（deploy/cpp/）共用：导出分模块 ONNX -> trtexec
+【部署前置步骤】C++ 推理（deploy/src/）共用：导出分模块 ONNX -> trtexec
 构建 TRT engine（deploy/build_trt_engine.sh）。本脚本只负责 ONNX 导出；
 TRT engine 一律用 deploy/build_trt_engine.sh 构建。
 
@@ -23,7 +23,7 @@ import os
 import os.path as osp
 import sys
 
-# deeplearning 根（上 2 级）：models/datasets/scripts 与 deploy.python 包都在其下
+# deeplearning 根（上 2 级）：models/datasets/scripts 与 deploy.scripts 包都在其下
 _DL_ROOT = osp.dirname(osp.dirname(osp.abspath(__file__)))
 sys.path.insert(0, _DL_ROOT)
 
@@ -35,7 +35,7 @@ from models import build_model
 from scripts.config import load_config
 from scripts.trainer import load_model_checkpoint
 
-from deploy.python.graphs import GRAPH_IO
+from deploy.scripts.graphs import GRAPH_IO
 
 # ------------------------------------------------------------------ 图定义
 # det 用 BF 结构（与 CUDA-BEVFusion 引擎输入输出名一致）
@@ -262,7 +262,7 @@ def _bn_restore(model, state):
 def _sample_inputs(cfg, model, task):
     """合成输入：verify 只对比 onnx 与 torch 在同一输入下的输出相对差。
 
-    全部使用固定形状的随机/单位张量（不再依赖 deploy.python 推理）。
+    全部使用固定形状的随机/单位张量（不依赖推理链路）。
     det 按 BF 结构补算 bev360（DownsampleBf 的输入）。
     """
     dev, dt = "cuda", torch.float16

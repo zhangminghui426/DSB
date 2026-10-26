@@ -13,8 +13,8 @@
   diff   三端逐模块 max-abs / rel 对比 + 框对比
 
 用法（3rdparty/deeplearning 下，先跑 torch 再 onnx/trt/diff；或 --backend all）：
-  python deploy/tools/model_diff.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-      --backend all --onnx-dir outputs/onnx_bf --engine-dir deploy/cpp/model/resnet50/build \
+  python deploy/tool/model_diff.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+      --backend all --onnx-dir outputs/onnx --engine-dir deploy/model/resnet50/build \
       --dump-dir outputs/model_diff --sample-index 0
 """
 import argparse
@@ -566,8 +566,8 @@ def main():
     ap.add_argument("config", nargs="?")
     ap.add_argument("ckpt", nargs="?")
     ap.add_argument("--backend", default="all", choices=["torch", "onnx", "trt", "diff", "trt-full", "vis", "all"])
-    ap.add_argument("--onnx-dir", default="outputs/onnx_bf")
-    ap.add_argument("--engine-dir", default="deploy/cpp/model/resnet50/build")
+    ap.add_argument("--onnx-dir", default="outputs/onnx")
+    ap.add_argument("--engine-dir", default="deploy/model/resnet50/build")
     ap.add_argument("--dump-dir", default="outputs/model_diff")
     ap.add_argument("--sample-index", type=int, default=0)
     ap.add_argument("--data-dir", default="outputs/example-data")

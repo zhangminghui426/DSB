@@ -22,7 +22,7 @@
 
 # configure the environment
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-. ${SCRIPT_DIR}/cpp/tool/environment.sh
+. ${SCRIPT_DIR}/tool/environment.sh
 
 if [ "$ConfigurationStatus" != "Success" ]; then
     echo "Exit due to configure failure."
@@ -33,7 +33,7 @@ fi
 # version=`trtexec | grep -m 1 TensorRT | sed -n "s/.*\[TensorRT v\([0-9]*\)\].*/\1/p"`
 
 # resnet50/resnet50-int8/swint-tiny
-base=model/$DEBUG_MODEL
+base=${SCRIPT_DIR}/model/$DEBUG_MODEL  # deploy/model/<name>（扁平布局）
 
 # fp16/int8
 precision=$DEBUG_PRECISION
@@ -73,6 +73,7 @@ function compile_trt_model(){
     number_of_output=$4
     extra_flags=$5
     result_save_directory=$base/build
+    mkdir -p ${SCRIPT_DIR}/model
     onnx=$base/$name.onnx
 
     if [ -s "${result_save_directory}/$name.plan" ]; then

@@ -1,6 +1,6 @@
 """导出 CUDA-BEVFusion 输入格式（example-data：.tensor + jpg）。
 
-对应 deploy/cpp/src/main.cpp 的输入契约：
+对应 deploy/src/main.cpp 的输入契约：
   camera2lidar.tensor      (6,4,4) float32   camera -> lidar 外参
   camera_intrinsics.tensor (6,4,4) float32   内参（4x4，下 3 行为旋转/平移）
   lidar2image.tensor       (6,4,4) float32   lidar -> 图像投影矩阵
@@ -9,11 +9,11 @@
   0-FRONT.jpg ... 5-BACK_RIGHT.jpg           6 张原始相机图（1600x900）
 
 用法：
-  python deploy/tools/export_example_data.py configs/det_convfuser.py \
+  python deploy/tool/export_example_data.py configs/det_convfuser.py \
       ckpts/bevfusion-det-bf.pth --sample-index 0 --out-dir outputs/example-data
 
 生成后：
-  cd 3rdparty/deeplearning/deploy/cpp && . tool/environment.sh && \
+  cd 3rdparty/deeplearning/deploy && . tool/environment.sh && \
   bash tool/run.sh（或 ./build/bevfusion <data-dir> resnet50int8 fp16）
 """
 
@@ -97,7 +97,7 @@ def main():
     print(f"[example] points.tensor {pts.shape} {pts.dtype} (N={pts.shape[0]})")
 
     print(f"[example] done -> {osp.join(args.out_dir)}")
-    print("         cd 3rdparty/deeplearning/deploy/cpp && . tool/environment.sh")
+    print("         cd 3rdparty/deeplearning/deploy && . tool/environment.sh")
     print("         ./build/bevfusion <上述目录> resnet50 fp16")
 
 

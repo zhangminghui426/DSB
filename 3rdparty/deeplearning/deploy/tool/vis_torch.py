@@ -4,7 +4,7 @@
 框源：model_diff 的 torch/trt 后端 dump（boxes.npy），可叠加 C++ 打印框（--cpp-boxes）。
 
 用法：
-  python deploy/tools/vis_torch.py --dump-dir outputs/model_diff --data-dir outputs/example-data \\
+  python deploy/tool/vis_torch.py --dump-dir outputs/model_diff --data-dir outputs/example-data \\
       --cpp-boxes outputs/model_diff/cpp_boxes.txt --score-thr 0.12
 
 输出（--out-dir，默认 outputs/model_diff）：

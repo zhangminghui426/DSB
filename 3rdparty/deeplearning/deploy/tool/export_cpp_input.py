@@ -1,6 +1,6 @@
 """Export det inference inputs / weights / reference for the C++ runtime.
 
-Produces (consumed by deploy/cpp):
+Produces (consumed by deploy/src):
   <out>/meta.json + meta.txt     geometry / structure / decode parameters（C++ 层表）
   <out>/inputs/img.bin           (6,3,256,704) fp32 normalized image
   <out>/inputs/points.bin        int32 n + (n,5) fp32 lidar points
@@ -11,7 +11,7 @@ Produces (consumed by deploy/cpp):
   <out>/ref/decoder_feat.bin + boxes.json   torch 参考输出
 
 Run on the GPU box (same env as training):
-  python deploy/tools/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+  python deploy/tool/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
       --out-dir deploy_inputs --sample-index 0
 """
 

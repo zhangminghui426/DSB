@@ -2,11 +2,11 @@
 """torch 参考对拍：训练接口（build_dataset + collate_fn）跑 det 全链 -> 3D 框。
 
 example-data 由同一训练管线导出（sample-index 默认 0，与
-deploy/tools/export_example_data.py 一致），保证与 C++（deploy/cpp/build/bevfusion）
+deploy/tool/export_example_data.py 一致），保证与 C++（deploy/build/bevfusion）
 输入约定完全相同，用于对比 C++ 输出的 3D 框。
 
 用法（3rdparty/deeplearning 下）：
-  python deploy/tools/torch_ref_boxes.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth [--sample-index 0]
+  python deploy/tool/torch_ref_boxes.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth [--sample-index 0]
 """
 import argparse
 
