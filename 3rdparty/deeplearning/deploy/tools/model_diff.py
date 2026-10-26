@@ -219,7 +219,7 @@ def _trt_session(engine_dir, graph):
     return ctx, in_names, out_names
 
 
-def backend_trt(engine_dir, dump_dir, model=None):
+def backend_trt(engine_dir, dump_dir, model=None, head_plan=None):
     import tensorrt as trt
     graphs = ["camera.backbone", "camera.vtransform", "fuser", "head.bbox"]
     feed_map = {
@@ -237,11 +237,14 @@ def backend_trt(engine_dir, dump_dir, model=None):
     stream = torch.cuda.current_stream().cuda_stream
     for graph in graphs:
         path = os.path.join(engine_dir, graph + ".plan")
-        # head.bbox 优先 layernormplugin 版（myelin fusion 有 TRT bug）
+        # head.bbox 优先 layernormplugin 版（myelin fusion 有 TRT bug），可用 --head-plan 指定
         if graph == "head.bbox":
-            alt = os.path.join(engine_dir, "head.bbox.layernormplugin.plan")
-            if os.path.exists(alt):
-                path = alt
+            if head_plan:
+                path = os.path.join(engine_dir, head_plan)
+            else:
+                alt = os.path.join(engine_dir, "head.bbox.layernormplugin.plan")
+                if os.path.exists(alt):
+                    path = alt
         if not os.path.exists(path):
             print(f"[trt] SKIP {graph}: {path} missing")
             continue
@@ -435,6 +438,8 @@ def main():
     ap.add_argument("--data-dir", default="outputs/example-data")
     ap.add_argument("--cpp-boxes", default=None,
                     help="C++ 打印的 bboxes 文本文件（vis 叠加第三色）")
+    ap.add_argument("--head-plan", default=None,
+                    help="head.bbox plan 文件名（如 head.bbox.fp32.plan；默认 layernormplugin.plan 优先）")
     args = ap.parse_args()
 
     model = None
@@ -444,7 +449,7 @@ def main():
     if args.backend in ("onnx", "all"):
         backend_onnx(args.onnx_dir, args.dump_dir)
     if args.backend in ("trt", "all"):
-        backend_trt(args.engine_dir, args.dump_dir, model)
+        backend_trt(args.engine_dir, args.dump_dir, model, args.head_plan)
     if args.backend in ("diff", "all"):
         backend_diff(args.dump_dir)
     if args.backend in ("vis", "all"):
