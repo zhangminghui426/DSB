@@ -50,7 +50,7 @@ def dump_bf_tensor(arr, path):
     """save_tensor 格式（与 C++ BEVFUSION_DUMP_DIR / export_example_data 一致）。"""
     arr = np.ascontiguousarray(arr)
     with open(path, "wb") as f:
-        f.write(np.array([0x33FF1101, arr.ndim, {np.int32: 1, np.float16: 2, np.float32: 3}[arr.dtype]],
+        f.write(np.array([0x33FF1101, arr.ndim, {"int32": 1, "float16": 2, "float32": 3}[arr.dtype.name]],
                          dtype=np.int32).tobytes())
         f.write(np.array(arr.shape, dtype=np.int32).tobytes())
         f.write(arr.tobytes())
