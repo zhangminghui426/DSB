@@ -13,6 +13,9 @@
 - [module_transfusion.pdf](module_transfusion.pdf)：TransFusionHead（heatmap 提案 + decoder）
 - [bevfusion_architecture.pdf](bevfusion_architecture.pdf)：检测链路与 TRT/libspconv/CUDA 部署切分
 
+架构图中的真实输入/输出缩略图（docs/figs/）由 `docs/render_result_figs.py` 在 nuScenes val 第 0 帧上
+跑检测/分割/占用推理生成。
+
 ## 坐标系约定(实测确认)
 
 - **LiDAR 自车架**:x = 右,y = 前,z = 上(用相邻帧 ego 位移标定验证)。

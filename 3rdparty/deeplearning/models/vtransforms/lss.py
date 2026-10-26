@@ -47,7 +47,6 @@ class LSSTransform(BaseTransform):
                 nn.Conv2d(
                     out_channels,
                     out_channels,
-                    out_channels,
                     3,
                     stride=downsample,
                     padding=1,

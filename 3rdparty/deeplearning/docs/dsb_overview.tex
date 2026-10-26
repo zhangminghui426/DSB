@@ -6,18 +6,22 @@
 \begin{document}
 \begin{tikzpicture}
 
-% ================================================================ inputs
-\node[io, text width=3.2cm] (cam_in) at (0,17)
-  {\textbf{6$\times$ Camera}\\3$\times$256$\times$704};
-\node[io, text width=3.2cm] (lidar_in) at (0,8)
-  {\textbf{LiDAR}\\$N\times5$ (x,y,z,i,t)};
+% ================================================================ inputs (real sample)
+\node[inner sep=1pt, draw=inkA!40, line width=0.5pt, rounded corners=2pt, fill=white] (cam_in) at (0,17)
+  {\includegraphics[width=4.0cm]{figs/cameras.png}};
+\node[tag, anchor=north] at (0,16.05) {6 cameras $\cdot$ real val frame};
+
+\node[inner sep=1pt, draw=inkA!40, line width=0.5pt, rounded corners=2pt, fill=black] (lidar_in) at (0,8)
+  {\includegraphics[width=2.5cm]{figs/lidar_bev.png}};
+\node[tag, anchor=north] at (0,6.6) {LiDAR point cloud (BEV)};
+
 \node[io, text width=3.6cm] (extr) at (0,12.5)
   {\textbf{Extrinsics / aug}\\camera2lidar $\cdot$ lidar2ego\\
    img\_aug $\cdot$ lidar\_aug};
-\node[io, text width=3.6cm] (occ_in) at (0,2.5)
-  {\textbf{6$\times$ Camera}\\7-tuple: imgs, sensor2ego,\\
-   ego2global, $K$, post, bda};
 
+\node[io, text width=3.4cm, inner sep=2pt] (occ_in) at (0,2.5)
+  {\includegraphics[width=2.6cm]{figs/cameras.png}\\[1pt]
+   \scriptsize 6 cameras + 7-tuple geometry};
 
 % ================================================================ BEVFusion
 \node[cam] (swin) at (4.6,17) {Swin-T\\+ GeneralizedLSSFPN};
@@ -59,114 +63,27 @@
 \draw[arr] (bevenc) -- (occhead);
 
 % extrinsics bus (dashed) feeding both view transforms
-\draw[darr] (extr.east) -- (2.0,12.5);
-\draw[darr] (2.0,18.2) -- (2.0,3.6);
-\node[tag, rotate=90] at (1.78,11.0) {geometry};
-\draw[darr] (2.0,18.2) -| (8.8,17.75) -- (vt.north);
-\draw[darr] (2.0,3.6)  -| (8.8,3.6)  -- (lss_occ.north);
+\draw[darr] (extr.east) -- (2.45,12.5);
+\draw[darr] (2.45,18.2) -- (2.45,3.6);
+\node[tag, rotate=90] at (2.23,11.0) {geometry};
+\draw[darr] (2.45,18.2) -| (8.8,17.75) -- (vt.north);
+\draw[darr] (2.45,3.6)  -| (8.8,3.6)  -- (lss_occ.north);
 
-% ================================================================ outputs
-\coordinate (det_anchor) at (33,17);
-\coordinate (seg_anchor) at (33,8);
-\coordinate (occ_anchor) at (33,2.5);
-\draw[arr] (object.east) -- (30.5,17);
-\draw[arr] (map.east) -- (30.5,8);
-\draw[arr] (occhead.east) -- (30.5,2.5);
+% ================================================================ outputs (real inference)
+\node[inner sep=1.5pt, draw=inkA!40, line width=0.5pt, rounded corners=3pt, fill=white] (det_out) at (33,17)
+  {\includegraphics[width=5.6cm]{figs/det_result.png}};
+\node[tag, anchor=north] at (33,15.75) {3D detection: BEV + camera};
+\draw[arr] (object.east) -- (det_out.west);
 
-% ---- detection output icon
-\begin{scope}[shift={(det_anchor)}]
-  \draw[fill=white, rounded corners=3pt, draw=inkA!40, line width=0.5pt]
-    (-2.5,-2.2) rectangle (2.5,2.2);
-  % camera strip
-  \fill[black!12] (-2.3,0.45) rectangle (2.3,2.0);
-  \draw[black!35] (-2.3,0.85) -- (2.3,1.05);
-  \foreach \x/\c/\col in {-1.6/0.55/detA, -0.2/0.8/occA, 1.2/0.6/detA} {
-    \draw[\col, line width=0.7pt]
-      (\x,\c) rectangle ++(0.55,0.45);
-    \draw[\col, line width=0.45pt]
-      (\x+0.1,\c+0.1) -- ++(0.18,0.12) -- ++(0.2,-0.12);
-  }
-  \node[tag, anchor=north west] at (-2.3,0.4) {camera};
-  % BEV panel
-  \fill[black!82] (-2.3,-2.05) rectangle (0.75,-0.05);
-  \foreach \x in {-2.2,-1.9,...,0.6} {
-    \draw[black!45, line width=0.25pt] (\x,-2.05) -- (\x,-0.05);
-  }
-  \foreach \y in {-1.95,-1.65,...,-0.15} {
-    \draw[black!45, line width=0.25pt] (-2.3,\y) -- (0.75,\y);
-  }
-  \foreach \x/\y/\c/\col in {-1.6/-1.5/0.42/detA, -0.2/-1.0/0.38/occA,
-                             -1.0/-0.5/0.36/lidA, 0.0/-1.7/0.3/detA} {
-    \draw[\col, line width=0.7pt] (\x,\y) rectangle ++(\c,\c);
-  }
-  \node[tag, anchor=north west] at (-2.3,-2.05) {BEV};
-  \node[note, anchor=west, text width=1.55cm] at (0.95,-0.9)
-    {\textbf{3D boxes}\\200 $\times$ (x,y,z,\\w,l,h,yaw)\\ + scores};
-\end{scope}
-\node[tag, anchor=north] at (33,14.6) {detection visualization};
+\node[inner sep=1.5pt, draw=inkA!40, line width=0.5pt, rounded corners=3pt, fill=white] (seg_out) at (33,8)
+  {\includegraphics[width=3.3cm]{figs/seg_result.png}};
+\node[tag, anchor=north] at (33,6.15) {BEV segmentation: 6 classes};
+\draw[arr] (map.east) -- (seg_out.west);
 
-% ---- segmentation output icon
-\begin{scope}[shift={(seg_anchor)}]
-  \draw[fill=white, rounded corners=3pt, draw=inkA!40, line width=0.5pt]
-    (-2.5,-2.2) rectangle (2.5,2.2);
-  \begin{scope}[shift={(-2.25,-2.0)}]
-    \foreach \i in {0,...,9} {
-      \foreach \j in {0,...,9} {
-        \pgfmathsetmacro{\cx}{\i*0.32}
-        \pgfmathsetmacro{\cy}{\j*0.32}
-        \fill[black!8] (\cx,\cy) rectangle ++(0.30,0.30);
-      }
-    }
-    % schematic classes: drivable / walkway / ped / divider / stop / carpark
-    \foreach \i/\j in {1/1,2/1,1/2,2/2,3/2,2/3,3/3,4/3,3/4,4/4,5/4,4/5,5/5,6/5,5/6,6/6,7/6,6/7,7/7,7/8} {
-      \fill[black!55] (\i*0.32,\j*0.32) rectangle ++(0.30,0.30);
-    }
-    \foreach \i/\j in {0/7,1/7,0/8,1/8,2/8,0/9,1/9,2/9} {
-      \fill[segA!75] (\i*0.32,\j*0.32) rectangle ++(0.30,0.30);
-    }
-    \foreach \i/\j in {8/2,9/2,8/3,9/3,7/3,8/4} {
-      \fill[lidA!70] (\i*0.32,\j*0.32) rectangle ++(0.30,0.30);
-    }
-    \foreach \i/\j in {4/0,5/0,4/1,5/1} {
-      \fill[fusA!85] (\i*0.32,\j*0.32) rectangle ++(0.30,0.30);
-    }
-    \foreach \i/\j in {9/8,9/9,8/9} {
-      \fill[black!25] (\i*0.32,\j*0.32) rectangle ++(0.30,0.30);
-    }
-  \end{scope}
-  \node[note, anchor=west, text width=1.55cm] at (1.15,-0.9)
-    {\textbf{BEV map}\\6 classes\\200$\times$200\\@ 0.5 m};
-\end{scope}
-\node[tag, anchor=north] at (33,5.6) {BEV segmentation visualization};
-
-% ---- occupancy output icon (isometric voxel grid)
-\begin{scope}[shift={(occ_anchor)}]
-  \draw[fill=white, rounded corners=3pt, draw=inkA!40, line width=0.5pt]
-    (-2.5,-2.2) rectangle (2.5,2.2);
-  \begin{scope}[shift={(-0.55,-1.75)}, x={(0.52cm,0.24cm)}, y={(-0.52cm,0.24cm)}, z={(0cm,0.52cm)}]
-    % cube faces
-    \draw[occA!60, fill=occA!8] (0,0,0) -- (3,0,0) -- (3,3,0) -- (0,3,0) -- cycle;
-    \draw[occA!60, fill=occA!14] (3,0,0) -- (3,3,0) -- (3,3,2) -- (3,0,2) -- cycle;
-    \draw[occA!60, fill=occA!18] (0,0,0) -- (3,0,0) -- (3,0,2) -- (0,0,2) -- cycle;
-    % grid
-    \foreach \i in {1,2} {
-      \draw[occA!35, line width=0.3pt] (\i,0,0) -- (\i,3,0);
-      \draw[occA!35, line width=0.3pt] (0,\i,0) -- (3,\i,0);
-      \draw[occA!35, line width=0.3pt] (3,\i,0) -- (3,\i,2);
-      \draw[occA!35, line width=0.3pt] (\i,0,0) -- (\i,0,2);
-      \draw[occA!35, line width=0.3pt] (\i,0,2) -- (\i,3,2);
-      \draw[occA!35, line width=0.3pt] (0,\i,2) -- (3,\i,2);
-    }
-    % filled voxels
-    \foreach \x/\y/\z in {0/1/0, 1/1/0, 1/2/0, 2/1/0, 0/0/1, 1/0/1, 2/2/0, 2/2/1} {
-      \fill[occA!75] (\x,\y,\z) -- ++(1,0,0) -- ++(0,1,0) -- ++(-1,0,0) -- cycle;
-      \fill[occA!55] (\x,\y,\z) -- ++(1,0,0) -- ++(0,0,1) -- ++(-1,0,0) -- cycle;
-    }
-  \end{scope}
-  \node[note, anchor=west, text width=1.45cm] at (1.45,-1.0)
-    {\textbf{Occupancy}\\200$\times$200$\times$16\\18 classes};
-\end{scope}
-\node[tag, anchor=north] at (33,-0.1) {occupancy visualization};
+\node[inner sep=1.5pt, draw=inkA!40, line width=0.5pt, rounded corners=3pt, fill=white] (occ_out) at (33,2.5)
+  {\includegraphics[width=3.3cm]{figs/occ_3d.png}};
+\node[tag, anchor=north] at (33,0.6) {occupancy: 200$\times$200$\times$16};
+\draw[arr] (occhead.east) -- (occ_out.west);
 
 % ================================================================ groups / titles
 \begin{scope}[on background layer]
