@@ -58,8 +58,8 @@ python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eva
 # 1) 导出分模块 ONNX（5 张图，含 SCN；--verify 用 onnxruntime 逐图校验）
 python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --verify
 
-# 2) 拷贝 ONNX 到 deploy/model/resnet50/ 并构建 TRT engine
-#    （head.bbox 自动用 fp32 层构建为 head.bbox.fp32.plan）
+# 2) 拷贝 ONNX + layers/ 到 deploy/model/resnet50/ 并构建 TRT engine
+#    （head.bbox 自动用 fp32 层构建为 head.bbox.fp32.plan；layers/ 供 per-layer SCN）
 DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 
 # 3) 生成 C++ 输入（6 相机 jpg + 矩阵/点云 tensor）
