@@ -46,6 +46,27 @@ def load_dump(name, dump_dir, sub="torch"):
     return np.load(os.path.join(dump_dir, sub, name + ".npy"))
 
 
+def dump_bf_tensor(arr, path):
+    """save_tensor 格式（与 C++ BEVFUSION_DUMP_DIR / export_example_data 一致）。"""
+    arr = np.ascontiguousarray(arr)
+    with open(path, "wb") as f:
+        f.write(np.array([0x33FF1101, arr.ndim, {np.int32: 1, np.float16: 2, np.float32: 3}[arr.dtype]],
+                         dtype=np.int32).tobytes())
+        f.write(np.array(arr.shape, dtype=np.int32).tobytes())
+        f.write(arr.tobytes())
+
+
+def load_model_only(cfg, ckpt):
+    """只加载模型（onnx/trt 后端 decode 用），不重跑 torch dump。"""
+    from scripts.config import load_config
+    from models import build_model
+    from scripts.trainer import load_model_checkpoint
+    cfg = load_config(cfg)
+    model = build_model(cfg.model).cuda().eval()
+    load_model_checkpoint(model, ckpt, strict=True)
+    return model
+
+
 # ---------------------------------------------------------------- torch 后端
 def project_depth(batch, vt):
     """BaseDepthTransform 前段：点云 -> 稀疏深度图 [B,N,1,H,W]（与训练推理一致）。"""
@@ -177,7 +198,7 @@ def backend_torch(cfg, ckpt, dump_dir, sample_index=0, cpp_dir="outputs/model_di
 
 
 # ---------------------------------------------------------------- onnx 后端
-def backend_onnx(onnx_dir, dump_dir):
+def backend_onnx(onnx_dir, dump_dir, model=None):
     import onnxruntime as ort
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
     feeds = {
@@ -224,7 +245,18 @@ def _trt_session(engine_dir, graph):
     in_names = [n for n in names if eng.get_tensor_mode(n) == trt.TensorIOMode.INPUT]
     out_names = [n for n in names if eng.get_tensor_mode(n) == trt.TensorIOMode.OUTPUT]
     return ctx, in_names, out_names
-
+    # decode：onnx head 输出 + torch bbox_coder（filter=False + score>0.12 对齐 C++）
+    if model is not None and os.path.exists(os.path.join(dump_dir, "onnx", "score.npy")):
+        head = model.heads["object"]
+        ts = lambda k: torch.from_numpy(load_dump(k, dump_dir, "onnx")).float().cuda()
+        preds = head.bbox_coder.decode(ts("score"), ts("rot"), ts("dim"), ts("reg"),
+                                       ts("height"), ts("vel"), filter=False)
+        boxes = preds[0]["bboxes"].detach().cpu().numpy()
+        sc = preds[0]["scores"].detach().cpu().numpy()
+        keep = sc > 0.12
+        np.save(os.path.join(dump_dir, "onnx", "boxes.npy"), boxes[keep])
+        np.save(os.path.join(dump_dir, "onnx", "scores.npy"), sc[keep])
+        print(f"[onnx] {int(keep.sum())} boxes (score>0.12)")
 
 def backend_trt(engine_dir, dump_dir, model=None, head_plan=None):
     import tensorrt as trt
@@ -329,20 +361,17 @@ def _parse_cpp_boxes(path):
     return np.array(boxes, dtype=np.float32)
 
 
-def backend_vis(dump_dir, data_dir, cpp_boxes_txt=None):
+def _plot_vis(out, dump_dir, data_dir, subs, extra_sets=()):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import cv2
 
-    sets = []
-    for sub, color, label in [("torch", "limegreen", "torch"),
-                              ("trt", "red", "trt")]:
+    sets = list(extra_sets)
+    for sub, color, label in subs:
         p = os.path.join(dump_dir, sub, "boxes.npy")
         if os.path.exists(p):
             sets.append((np.load(p), color, label))
-    if cpp_boxes_txt and os.path.exists(cpp_boxes_txt):
-        sets.append((_parse_cpp_boxes(cpp_boxes_txt), "blue", "cpp"))
 
     l2i = load_tensor(os.path.join(data_dir, "lidar2image.tensor"))
     pts = load_tensor(os.path.join(data_dir, "points.tensor"))
@@ -362,7 +391,7 @@ def backend_vis(dump_dir, data_dir, cpp_boxes_txt=None):
             rect += np.array([x, y])
             ax.plot(rect[:, 0], -rect[:, 1], color=color, lw=1.2)
     ax.set_xlim(-54, 54); ax.set_ylim(-54, 54); ax.set_aspect("equal")
-    ax.set_title("BEV（torch 绿 / trt 红 / cpp 蓝）")
+    ax.set_title("BEV " + " / ".join(f"{label}({color})" for _, color, label in sets))
     ax.grid(True, alpha=0.3)
 
     cam_axes = [axes[0][1], axes[0][2], axes[1][0], axes[1][1], axes[1][2], axes[2][0]]
@@ -391,9 +420,17 @@ def backend_vis(dump_dir, data_dir, cpp_boxes_txt=None):
         axl.plot([], [], color=color, lw=2, label=f"{label} ({len(arr)})")
     axl.legend(loc="center", fontsize=14)
 
-    out = os.path.join(dump_dir, "vis_compare.jpg")
     plt.savefig(out, dpi=100, bbox_inches="tight")
     print(f"[vis] saved {out}")
+
+
+def backend_vis(dump_dir, data_dir, cpp_boxes_txt=None):
+    cpp_sets = ()
+    if cpp_boxes_txt and os.path.exists(cpp_boxes_txt):
+        cpp_sets = ((_parse_cpp_boxes(cpp_boxes_txt), "blue", "cpp"),)
+    for sub, extra in [("onnx", ()), ("trt", cpp_sets)]:
+        subs = [("torch", "limegreen", "torch"), (sub, "red", sub)]
+        _plot_vis(os.path.join(dump_dir, f"{sub}_vis.jpg"), dump_dir, data_dir, subs, extra)
 
 
 # ---------------------------------------------------------------- diff
@@ -475,8 +512,11 @@ def main():
     if args.backend in ("torch", "all"):
         assert args.config and args.ckpt, "torch 后端需要 config + ckpt"
         model = backend_torch(args.config, args.ckpt, args.dump_dir, args.sample_index, args.cpp_dir)
+    elif args.backend in ("onnx", "trt"):
+        assert args.config and args.ckpt, f"{args.backend} 后端 decode 需要 config + ckpt"
+        model = load_model_only(args.config, args.ckpt)
     if args.backend in ("onnx", "all"):
-        backend_onnx(args.onnx_dir, args.dump_dir)
+        backend_onnx(args.onnx_dir, args.dump_dir, model)
     if args.backend in ("trt", "all"):
         backend_trt(args.engine_dir, args.dump_dir, model, args.head_plan)
     if args.backend in ("diff", "all"):

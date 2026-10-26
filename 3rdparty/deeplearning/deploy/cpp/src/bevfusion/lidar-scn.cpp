@@ -30,12 +30,14 @@
 #include <cstdlib>
 #include <vector>
 
+#include "common/check.hpp"
+
 namespace bevfusion {
 namespace lidar {
 
 // 调试：BEVFUSION_DUMP_DIR 时落盘 voxelize 输出（coords int32 / feats half，
 // save_tensor 同格式），供 model_diff --backend trt-full 隔离 voxelize vs SCN。
-static void dump_voxelize(const Voxelization* v, void* stream) {
+static void dump_voxelize(Voxelization* v, void* stream) {
   const char* dir = getenv("BEVFUSION_DUMP_DIR");
   if (!dir) return;
   cudaStream_t s = (cudaStream_t)stream;
