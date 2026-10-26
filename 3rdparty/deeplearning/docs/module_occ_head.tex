@@ -1,0 +1,68 @@
+% FlashOCC occupancy branch: encoder chain + BEVOCCHead2D detail.
+\documentclass[tikz,border=8pt]{standalone}
+\input{tikz_style.tex}
+
+\begin{document}
+\begin{tikzpicture}
+
+% ---------------------------------------------------------------- occ encoder
+\node[io, text width=4.2cm] (in) at (0,12)
+  {\textbf{6$\times$ images} $(B,6,3,256,704)$\\+ 7-tuple geometry};
+\node[cam, text width=3.2cm] (r50) at (4.6,12)
+  {\textbf{ResNet-50}\\out\_indices [2,3]\\C4 1024, C5 2048};
+\node[cam, text width=3.2cm] (fpn) at (8.2,12)
+  {\textbf{CustomFPN}\\$\to$ 256 @ 16$\times$44};
+\node[cam, text width=3.8cm] (lss) at (12.2,12)
+  {\textbf{LSSViewTransformer}\\D=88 (1--45 m), 64 ch\\
+   BEV $200\times200\times1$};
+\node[cam, text width=3.8cm] (cr) at (16.4,12)
+  {\textbf{CustomResNet}\\128@100$^2$, 256@50$^2$, 512@25$^2$};
+\node[cam, text width=3.8cm] (fpnlss) at (20.6,12)
+  {\textbf{FPN\_LSS}\\fuse + $\times2$ upsample\\
+   $\to$ 256 @ 200$\times$200};
+\node[io] (bev) at (24.6,12)
+  {\textbf{BEV feature}\\$256\times200\times200$};
+
+\draw[arr] (in) -- (r50);
+\draw[arr] (r50) -- (fpn);
+\draw[arr] (fpn) -- (lss);
+\draw[arr] (lss) -- (cr);
+\draw[arr] (cr) -- (fpnlss);
+\draw[arr] (fpnlss) -- (bev);
+
+% ---------------------------------------------------------------- BEVOCCHead2D
+\node[occ, text width=3.6cm] (final) at (24.6,7.0)
+  {\textbf{final\_conv}\\Conv $3\times3$ 256$\to$256\\BN + ReLU};
+\node[occ, text width=3.4cm] (pred) at (28.8,7.0)
+  {\textbf{predicter}\\Linear 256$\to$512\\
+   Softplus\\Linear 512$\to$288};
+\node[occ, text width=2.6cm] (view) at (32.2,7.0)
+  {\textbf{view}\\$(B,200,200,$\\$16,18)$};
+\node[occ, text width=2.4cm] (arg) at (35.2,7.0)
+  {\textbf{softmax}\\$\to$ argmax};
+\node[io, text width=3.0cm] (out) at (38.6,7.0)
+  {\textbf{occupancy}\\$200\times200\times16$\\18 classes};
+
+\draw[arr] (bev.south) -- (final.north);
+\draw[arr] (final) -- (pred);
+\draw[arr] (pred) -- (view);
+\draw[arr] (view) -- (arg);
+\draw[arr] (arg) -- (out);
+
+% ---------------------------------------------------------------- details / notes
+\node[note, anchor=north west, text width=22.5cm] at (0,9.5)
+  {\textbf{Channel-to-height:} the view transformer collapses the single z-bin
+   ($-1$--$5.4$ m, 6.4 m) into channels, so the BEV feature is 2D. The head maps
+   256 channels to $18\times16$ logits and reshapes them as $(D_x,D_y,D_z,C)$.
+   Training uses cross-entropy with the camera-visibility mask; inference returns
+   an argmax $200\times200\times16$ uint8 occupancy grid.};
+
+\node[note, anchor=north west, text width=27cm] at (-1.6,3.2)
+  {Occ config: grid $x,y\in[-40,40]$ @ 0.4 m (200$\times$200), $z\in[-1,5.4]$ (one bin + 16-way
+   channel folding); depth 1--45 m @ 0.5 m (D=88). The encoder is camera-only (no LiDAR); the
+   7-tuple input bundles images with sensor2ego / ego2global / intrinsics / post-rots / bda.};
+
+\node[hdr] at (-1.6,15.0) {FlashOCC occupancy branch: image encoder $\to$ LSS BEV $\to$ BEVOCCHead2D};
+
+\end{tikzpicture}
+\end{document}

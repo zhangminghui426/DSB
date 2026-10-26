@@ -1,0 +1,33 @@
+% Shared styles for the DSB architecture diagrams.
+\usepackage[T1]{fontenc}
+\usetikzlibrary{arrows.meta, backgrounds, calc, fit, positioning, shapes.geometric}
+
+\definecolor{camA}{HTML}{2A78D6}
+\definecolor{lidA}{HTML}{1BAF7A}
+\definecolor{fusA}{HTML}{EB6834}
+\definecolor{detA}{HTML}{6250D6}
+\definecolor{segA}{HTML}{0E8FA8}
+\definecolor{occA}{HTML}{B5482A}
+\definecolor{inkA}{HTML}{262626}
+\definecolor{mutA}{HTML}{6B6B6B}
+
+\tikzset{
+  blk/.style={
+    draw=inkA!70, line width=0.45pt, rounded corners=2.5pt,
+    align=center, font=\small, inner sep=3pt,
+    minimum height=0.95cm, text=inkA, fill=white,
+  },
+  cam/.style={blk, fill=camA!10, draw=camA!75},
+  lid/.style={blk, fill=lidA!10, draw=lidA!75},
+  fus/.style={blk, fill=fusA!12, draw=fusA!80},
+  det/.style={blk, fill=detA!10, draw=detA!75},
+  seg/.style={blk, fill=segA!10, draw=segA!75},
+  occ/.style={blk, fill=occA!10, draw=occA!75},
+  io/.style={blk, fill=black!4, draw=inkA!55},
+  arr/.style={-{Stealth[length=2.2mm,width=1.6mm]}, line width=0.65pt, draw=inkA!75},
+  darr/.style={arr, dashed},
+  tag/.style={font=\scriptsize, text=mutA},
+  grp/.style={draw=mutA!70, dashed, line width=0.6pt, rounded corners=6pt, inner sep=8pt},
+  hdr/.style={font=\normalsize\bfseries, text=inkA, anchor=west},
+  note/.style={font=\scriptsize, text=mutA, align=left},
+}

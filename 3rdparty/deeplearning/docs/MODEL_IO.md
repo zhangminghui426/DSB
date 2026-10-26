@@ -3,8 +3,15 @@
 以检测配置 `configs/det_convfuser.py`(camera+lidar 融合)与分割配置
 `configs/seg_fusion_bev256d2_lss.py` 为准。B = batch size。
 
-架构与部署切分图：[bevfusion_architecture.tex](bevfusion_architecture.tex)
-（[PDF](bevfusion_architecture.pdf)，`pdflatex` 或 `tectonic` 编译）。
+架构图（TikZ 源码 + 编译 PDF；在 `docs/` 下执行 `pdflatex <name>.tex` 或 `tectonic -X compile <name>.tex`）：
+
+- [dsb_overview.pdf](dsb_overview.pdf)：整体架构 —— BEVFusion 检测 + BEV 分割、FlashOCC 占用，
+  含相机/雷达/外参输入与检测框、BEV 地图、占用栅格输出可视化
+- [module_vtransform.pdf](module_vtransform.pdf)：DepthLSS / LSS 视图变换
+- [module_sparse_encoder.pdf](module_sparse_encoder.pdf)：LiDAR SparseEncoder
+- [module_occ_head.pdf](module_occ_head.pdf)：FlashOCC 编码链 + BEVOCCHead2D
+- [module_transfusion.pdf](module_transfusion.pdf)：TransFusionHead（heatmap 提案 + decoder）
+- [bevfusion_architecture.pdf](bevfusion_architecture.pdf)：检测链路与 TRT/libspconv/CUDA 部署切分
 
 ## 坐标系约定(实测确认)
 
