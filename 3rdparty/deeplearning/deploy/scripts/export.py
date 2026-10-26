@@ -1,25 +1,11 @@
-"""Split-module ONNX export for BEVFusion det / seg（唯一 ONNX 导出脚本）。
+"""BEVFusion det 分模块 ONNX 导出（5 张图）。
 
-【部署前置步骤】C++ 推理（deploy/src/）共用：导出分模块 ONNX -> trtexec
-构建 TRT engine（deploy/build_trt_engine.sh）。本脚本只负责 ONNX 导出；
-TRT engine 一律用 deploy/build_trt_engine.sh 构建。
+用法（3rdparty/deeplearning 下）：
+  python deploy/scripts/export.py CONFIG CHECKPOINT [--outdir outputs/onnx] [--verify]
+  构建 engine：DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 
-det 按 CUDA-BEVFusion（NVIDIA-AI-IOT/Lidar_AI_Solution）模块切分（BF 结构）：
-  camera.backbone(img, depth) -> camera_feature, camera_depth_weights
-  camera.vtransform(feat_in=bev360) -> feat_out=cam_bev
-  fuser(camera=cam_bev, lidar=lidar_bev) -> middle
-  head.bbox(middle) -> score, rot, dim, reg, height, vel
-  lidar.backbone.xyz(voxels, coors) -> lidar_bev（libspconv 自定义稀疏算子）
-每个 dense 图都可被 TRT 直接解析（SCN 除外，走 libspconv 引擎）。
-
-SCN 导出时把 BN 与 ReLU 都融合进 SparseConvolution（activation 属性），与
-CUDA-BEVFusion 的 layer_fusion 一致；ReLU 若留成独立 Relu 节点，libspconv
-会算错稀疏邻域。
-
-Usage（run from the model repo root 3rdparty/deeplearning）:
-  python deploy/scripts/export.py CONFIG CHECKPOINT --verify
-  之后构建 engine：cd 3rdparty/deeplearning && DEBUG_MODEL=resnet50 \
-      DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
+图：camera.backbone / camera.vtransform / fuser / head.bbox /
+    lidar.backbone.xyz（SCN，libspconv 解析；BN+ReLU 必须融合进卷积）。
 """
 
 import argparse
@@ -27,7 +13,6 @@ import os
 import os.path as osp
 import sys
 
-# 路径：scripts/（本文件） -> deploy/ -> deeplearning 根
 _HERE = osp.dirname(osp.abspath(__file__))
 _DEPLOY_ROOT = osp.dirname(_HERE)
 _DL_ROOT = osp.dirname(_DEPLOY_ROOT)
@@ -38,12 +23,6 @@ import numpy as np
 import torch
 from torch import nn
 
-from models import build_model
-from scripts.config import load_config
-from scripts.trainer import load_model_checkpoint
-
-# ------------------------------------------------------------------ 图定义
-# det 用 BF 结构（与 CUDA-BEVFusion 引擎输入输出名一致）
 BF_IO = {
     "camera.backbone": (["img", "depth"], ["camera_feature", "camera_depth_weights"]),
     "camera.vtransform": (["feat_in"], ["feat_out"]),
@@ -55,7 +34,7 @@ SCN_ONNX_NAME = "lidar.backbone.xyz.onnx"
 
 # ------------------------------------------------------------------ wrappers
 class CamBackbone(nn.Module):
-    """backbone + neck -> (B, N, C, fH, fW) feats（_sample_inputs 合成输入用）。"""
+    """backbone + neck -> (B, N, C, fH, fW) feats。"""
 
     def __init__(self, model):
         super().__init__()
@@ -74,13 +53,7 @@ class CamBackbone(nn.Module):
 
 
 class CamBackboneBf(nn.Module):
-    """backbone + neck + dtransform + depthnet 合并（CUDA-BEVFusion 结构）。
-
-    forward(img, depth):
-        img (B,N,3,H,W) + depth (B,N,1,H,W)
-        -> camera_feature (B,N,fH,fW,C)（HWC，bevpool kernel 按此布局）
-        -> camera_depth_weights (B,N,D,fH,fW)（已 softmax）
-    """
+    """(img, depth) -> camera_feature (B,N,fH,fW,C) + camera_depth_weights (B,N,D,fH,fW)。"""
 
     def __init__(self, model):
         super().__init__()
@@ -153,12 +126,7 @@ class FuserDecoder(nn.Module):
 
 
 class HeadBboxBf(nn.Module):
-    """TransFusion head 原始预测（decode 留在 C++）。
-
-    forward(middle): (1,512,180,180)
-        -> (score, rot, dim, reg, height, vel)
-        score = heatmap.sigmoid() * query_heatmap_score * one_hot
-    """
+    """middle -> (score, rot, dim, reg, height, vel)，decode 留在 C++。"""
 
     def __init__(self, model):
         super().__init__()
@@ -232,12 +200,8 @@ def _bn_restore(model, state):
 
 
 def _sample_inputs(cfg, model):
-    """合成输入：verify 只对比 onnx 与 torch 在同一输入下的输出相对差。
-
-    全部使用固定形状的随机/单位张量（不依赖推理链路）。
-    det 按 BF 结构补算 bev360（DownsampleBf 的输入）。
-    """
-    dev, dt = "cuda", torch.float32  # 模型 fp32（onnx fp32；TRT 侧由 trtexec --fp16 转 fp16 引擎）
+    """固定形状的合成输入，供 --verify 对比 onnx 与 torch 输出。"""
+    dev, dt = "cuda", torch.float32  # onnx 为 fp32；TRT 由 trtexec --fp16 转 fp16
     img = torch.randn(1, 6, 3, 256, 704, device=dev, dtype=dt)
     with torch.no_grad():
         feats = CamBackbone(model)(img)
@@ -248,12 +212,9 @@ def _sample_inputs(cfg, model):
             "camera2lidar": eye4.repeat(1, 6, 1, 1),
             "camera_intrinsics": eye4.repeat(1, 6, 1, 1),
             "img_aug_matrix": eye4.repeat(1, 6, 1, 1),
-            # lidar_aug_matrix 无 N 维：get_geometry 的 extra_rots/extra_trans
-            # view(B,1,...,3,3)/view(B,1,...,3) 后 repeat(N)，期望 (B,4,4)
             "lidar_aug_matrix": eye4[0],
         }
         lidar_bev = torch.randn(1, 256, 180, 180, device=dev, dtype=dt)
-        # bev_pool 输出（DownsampleBf 输入，360x360）
         vt = model.encoders["camera"]["vtransform"]
         B, N = img.shape[0], img.shape[1]
         D, C = vt.D, vt.C
@@ -271,9 +232,9 @@ def _sample_inputs(cfg, model):
             extra_rots=batch["lidar_aug_matrix"][..., :3, :3],
             extra_trans=batch["lidar_aug_matrix"][..., :3, 3],
         )
-        bev360 = vt.bev_pool(geom, x)    # (B, C, 360, 360)（DownsampleBf 输入）
-        cam_bev = vt.downsample(bev360)  # (B, C, 180, 180)（FuserDecoder 输入）
-        middle = FuserDecoder(model)(cam_bev, lidar_bev)  # head.bbox 输入
+        bev360 = vt.bev_pool(geom, x)
+        cam_bev = vt.downsample(bev360)
+        middle = FuserDecoder(model)(cam_bev, lidar_bev)
 
     return dict(batch=batch, sample=None, img=img, feats=feats, depth=depth,
                 depthnet=depthnet, cam_bev=cam_bev, lidar_bev=lidar_bev,
@@ -282,17 +243,10 @@ def _sample_inputs(cfg, model):
 
 # ------------------------------------------------------------------ SCN onnx
 def export_scn_onnx(model, save):
-    """稀疏编码器 -> lidar.backbone.xyz.onnx（3DSparseConvolution 自定义算子图）。
+    """稀疏编码器 -> lidar.backbone.xyz.onnx（3DSparseConvolution 算子图）。
 
-    voxels(1,5) + coors(1,4) 单点占位 trace，权重来自 checkpoint。
-
-    必须用 layer_fusion_bn_relu（与 CUDA-BEVFusion 的 funcs.layer_fusion 一致）：
-      - conv+bn 融合进权重，否则 trace 时 BN 输出 tensor 无法注册；
-      - ReLU 写进 conv 的 activation 属性。若把 ReLU 留成图里的独立 Relu
-        节点，libspconv 在该结构下会算错稀疏邻域，导致 lidar_bev 与 torch
-        严重不符（NVIDIA export-scn.py 的 --inferonly 注释也提到该问题）。
-    xyz 布局（inverse=False）：libspconv 期望 OKI (Cout,Kz,Ky,Kx,Cin)；
-    本仓库 spconv 2.x 权重原样导出。
+    BN+ReLU 必须融合进 SparseConvolution（activation 属性）；ReLU 留成独立
+    节点时 libspconv 会算错稀疏邻域。xyz 布局：权重按 spconv 2.x OKI 原样导出。
     """
     from lean import exptool, funcs
 
@@ -321,9 +275,8 @@ class OnnxExporter:
         self.out_names = {name: io[1] for name, io in self.io.items()}
 
     def export(self, inp):
-        """Write one ONNX per graph; returns {graph: path}."""
-        # torch.onnx.export tracing flips BatchNorm into train mode and
-        # mutates running stats; snapshot/restore keeps torch refs valid.
+        """逐图导出 ONNX，返回 {graph: path}。"""
+        # trace 会把 BN 切到 train 并改 running stats，先快照、后恢复
         snap = _bn_snapshot(self.model)
         paths = {}
         for name in self.wrappers:
@@ -341,7 +294,7 @@ class OnnxExporter:
         return paths
 
     def verify(self, inp, paths):
-        """ONNX Runtime parity + onnx.checker for every exported graph."""
+        """onnxruntime 对齐 + onnx.checker。"""
         import onnx
         import onnxruntime as ort
 
@@ -371,22 +324,26 @@ class OnnxExporter:
         assert ok, "ONNX parity failed"
 
     def run(self, cfg, verify=True):
-        """Sample inputs -> export all graphs -> optional verify."""
+        """导出全部图，可选 verify。"""
         inp = _sample_inputs(cfg, self.model)
         paths = self.export(inp)
-        print("[export] onnx:", paths)
+        print("[export] onnx ->", self.outdir)
         if verify:
             self.verify(inp, paths)
         return paths
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    from models import build_model
+    from scripts.config import load_config
+    from scripts.trainer import load_model_checkpoint
+
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("config")
     ap.add_argument("checkpoint")
     ap.add_argument("--opset", type=int, default=17)
-    ap.add_argument("--outdir", default=osp.join("outputs", "onnx"),
-                    help="ONNX 输出目录（det: BF 结构，与 CUDA-BEVFusion 一致）")
+    ap.add_argument("--outdir", default=osp.join("outputs", "onnx"))
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--options", nargs="*", default=[])
     args = ap.parse_args()
@@ -405,12 +362,9 @@ def main():
     # SCN 稀疏编码器（lidar.backbone.xyz.onnx）
     scn_path = osp.join(args.outdir, SCN_ONNX_NAME)
     export_scn_onnx(model, scn_path)
-    print("[export] scn:", scn_path)
 
-    print()
-    print("[export] TRT engine 一律用 deploy/build_trt_engine.sh 构建：")
-    print("  cd 3rdparty/deeplearning && DEBUG_MODEL=<name> DEBUG_PRECISION=fp16 "
-          "bash deploy/build_trt_engine.sh（engine 输出到 model/<name>/build/）")
+    print("[export] engine: DEBUG_MODEL=<name> DEBUG_PRECISION=fp16 "
+          "bash deploy/build_trt_engine.sh")
 
 
 if __name__ == "__main__":

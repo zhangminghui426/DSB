@@ -59,6 +59,18 @@ deploy/
   head.bbox.fp32，IO 均为 fp16:chw；head.bbox 用 fp32 层以规避 TRT fp16
   数值 bug，构建脚本已自动处理）
 
+## 三端对拍（torch / onnx / trt）
+
+```bash
+cd 3rdparty/deeplearning
+python deploy/tool/model_diff.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
+    --backend all --dump-dir outputs/model_diff
+```
+
+产物：`benchmark.json`（逐模块延时）、`report.png`（延时 + 精度对比）、
+`onnx_vis.jpg` / `trt_vis.jpg`（框叠加）。`--backend bench` / `report`
+可单独重跑性能与可视化。
+
 ## SCN 导出注意（ReLU 必须融合进卷积）
 
 libspconv 的 ONNX 引擎按 NVIDIA 导出的结构执行稀疏图：`SparseConvolution`

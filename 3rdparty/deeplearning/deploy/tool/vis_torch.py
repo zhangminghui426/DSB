@@ -1,16 +1,9 @@
-"""渲染 torch 推理框到 6 相机 + BEV 雷达视图（与 C++ cuda-bevfusion.jpg 同数据、同风格）。
+"""渲染 torch / C++ 检测框到 6 相机 + BEV 视图。
 
-数据源：outputs/example-data（与 C++ deploy 完全同数据：6 相机 jpg + points + lidar2image）。
-框源：model_diff 的 torch/trt 后端 dump（boxes.npy），可叠加 C++ 打印框（--cpp-boxes）。
-
-用法：
-  python deploy/tool/vis_torch.py --dump-dir outputs/model_diff --data-dir outputs/example-data \\
-      --cpp-boxes outputs/model_diff/cpp_boxes.txt --score-thr 0.12
-
-输出（--out-dir，默认 outputs/model_diff）：
-  torch_vis.jpg      torch 推理框（类色）
-  cpp_vis.jpg        C++ 框（类色，需 --cpp-boxes）
-  compare_vis.jpg    叠加：torch 类色 + C++ 洋红
+用法（3rdparty/deeplearning 下）：
+  python deploy/tool/vis_torch.py --dump-dir outputs/model_diff \
+      --data-dir outputs/example-data [--cpp-boxes cpp_boxes.txt]
+输出：torch_vis.jpg、cpp_vis.jpg、compare_vis.jpg（--out-dir，默认 outputs/model_diff）。
 """
 
 import argparse
@@ -18,9 +11,13 @@ import os
 import os.path as osp
 import sys
 
-sys.path.insert(0, osp.join(osp.dirname(osp.abspath(__file__)), "..", ".."))  # deeplearning/
+_HERE = osp.dirname(osp.abspath(__file__))
+for _path in (_HERE, osp.join(_HERE, "..", "..")):  # tool/, deeplearning/
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
-import numpy as np
+import numpy as np  # noqa: E402
+from common import load_tensor, parse_cpp_boxes  # noqa: E402
 from PIL import Image
 
 from scripts.render import DET_CLASSES, DET_COLORS, compose_det_frame, render_det_bev
@@ -28,29 +25,6 @@ from scripts.visualize import CAM_NAMES, shifted_corners
 
 CAM_ORDER = [2, 0, 1, 4, 3, 5]  # 显示顺序 FL,F,FR / BL,B,BR
 FILE_NAMES = ["FRONT", "FRONT_RIGHT", "FRONT_LEFT", "BACK", "BACK_LEFT", "BACK_RIGHT"]
-
-
-def load_tensor(p):
-    with open(p, "rb") as f:
-        h = np.fromfile(f, dtype="<i4", count=3)
-        d = tuple(np.fromfile(f, dtype="<i4", count=h[1]))
-        dt = {2: np.float16, 3: np.float32}.get(h[2], np.float32)
-        return np.fromfile(f, dtype=dt).reshape(d)
-
-
-def _parse_cpp_boxes(path):
-    import re
-    boxes = []
-    for line in open(path):
-        m = re.search(
-            r"id=(\d+) score=([-\d.]+) pos=\(([-\d.]+),([-\d.]+),([-\d.]+)\) "
-            r"size=\(([-\d.]+),([-\d.]+),([-\d.]+)\) rot=([-\d.]+)", line)
-        if m:
-            g = m.groups()
-            boxes.append([float(g[2]), float(g[3]), float(g[4]),
-                          float(g[5]), float(g[6]), float(g[7]),
-                          float(g[8]), float(g[1]), float(g[0])])
-    return np.array(boxes, dtype=np.float32)
 
 
 def _filter(boxes, score_col, thr, max_boxes):
@@ -108,7 +82,7 @@ def main():
 
     # C++ 框（cpp_boxes.txt: x,y,z,w,l,h,rot,score,id）
     if args.cpp_boxes and osp.exists(args.cpp_boxes):
-        cb = _parse_cpp_boxes(args.cpp_boxes)
+        cb = parse_cpp_boxes(args.cpp_boxes)
         ci = _filter(cb, 7, args.score_thr, args.max_boxes)
         if len(ci):
             cbc = cb[ci]

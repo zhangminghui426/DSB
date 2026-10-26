@@ -80,12 +80,7 @@ def fuse_bn_weights(conv_w_OKI, conv_b, bn_rm, bn_rv, bn_eps, bn_w, bn_b):
     return torch.nn.Parameter(conv_w_OKI), torch.nn.Parameter(conv_b)
 
 def fuse_bn(conv, bn):
-    """
-    Given a conv Module `A` and an batch_norm module `B`, returns a conv
-    module `C` such that C(x) == B(A(x)) in inference mode.
-    布局无关实现：conv.weight 首维为输出通道（spconv 2.x OKI 布局即可），
-    按输出通道缩放，避免 NVIDIA 原版按 torchsparse 布局写死的 permute。
-    """
+    """conv + bn -> conv（推理等价；按输出通道缩放，适配 spconv 2.x OKI 布局）。"""
     scale = bn.weight * torch.rsqrt(bn.running_var + bn.eps)
     if conv.bias is None:
         conv.bias = torch.nn.Parameter(torch.zeros_like(bn.running_mean))

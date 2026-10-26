@@ -1,18 +1,8 @@
-"""Export det inference inputs / weights / reference for the C++ runtime.
+"""导出 C++ 推理输入/权重/参考输出（meta.txt 层表）。
 
-Produces (consumed by deploy/src):
-  <out>/meta.json + meta.txt     geometry / structure / decode parameters（C++ 层表）
-  <out>/inputs/img.bin           (6,3,256,704) fp32 normalized image
-  <out>/inputs/points.bin        int32 n + (n,5) fp32 lidar points
-  <out>/inputs/matrices.bin      19x(4x4) float32 row-major
-                                (6 camera2lidar + 6 intrins + 6 img_aug + 1 lidar_aug)
-  <out>/weights/sparse_encoder.bin  稀疏编码器 conv/bn 参数（meta 给布局）
-  <out>/weights/downsample.bin       vtransform downsample conv/bn 参数
-  <out>/ref/decoder_feat.bin + boxes.json   torch 参考输出
-
-Run on the GPU box (same env as training):
-  python deploy/tool/export_cpp_input.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-      --out-dir deploy_inputs --sample-index 0
+用法（3rdparty/deeplearning 下）：
+  python deploy/tool/export_cpp_input.py configs/det_convfuser.py \
+      ckpts/bevfusion-det-bf.pth --out-dir deploy_inputs
 """
 
 import argparse
@@ -21,8 +11,7 @@ import os
 import os.path as osp
 import sys
 
-# 上两级即模型库根，允许以裸相对路径（configs/...、ckpts/...）运行
-_DL_ROOT = osp.join(osp.dirname(osp.abspath(__file__)), "..", "..")
+_DL_ROOT = osp.join(osp.dirname(osp.abspath(__file__)), "..", "..")  # deeplearning/
 sys.path.insert(0, _DL_ROOT)
 
 import numpy as np

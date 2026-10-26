@@ -99,7 +99,6 @@ def _to_oki_weight(w, in_channels, out_channels):
 @register_node("spconv.conv.SparseConvolution.forward")
 def symbolic_sparse_convolution(self, ilayer, y, x):
     register_tensor(y)
-    print(f"   --> SparseConvolution{ilayer}[{'subm' if self.subm else 'conv'}] -> Input {get_tensor_id(x)}, Output {get_tensor_id(y)}")
 
     if self.transposed:
         output_size = spconv.ops.get_deconv_output_size(
@@ -157,7 +156,6 @@ def symbolic_sparse_convolution(self, ilayer, y, x):
 @register_node("SparseConvolutionQunat.forward")
 def symbolic_sparse_convolution_quant(self, ilayer, y, x):
     register_tensor(y)
-    print(f"   --> SparseConvolutionQunat{ilayer}[{'subm' if self.subm else 'conv'}] -> Input {get_tensor_id(x)}, Output {get_tensor_id(y)}")
 
     if self.transposed:
         output_size = spconv.ops.get_deconv_output_size(
@@ -219,7 +217,6 @@ def symbolic_sparse_convolution_quant(self, ilayer, y, x):
 @register_node("torch.nn.ReLU.forward")
 def symbolic_relu(self, ilayer, y, x):
     register_tensor(y)
-    print(f"   --> ReLU{ilayer} -> Input {get_tensor_id(x)}, Output {get_tensor_id(y)}")
 
     nodes.append(
         helper.make_node(
@@ -230,7 +227,6 @@ def symbolic_relu(self, ilayer, y, x):
 @register_node("QuantAdd.forward")
 def symbolic_add_quant(self, ilayer, y, a, b):
     register_tensor(y)
-    print(f"   --> QuantAdd{ilayer} -> Input {get_tensor_id(a)} + {get_tensor_id(b)}, Output {get_tensor_id(y)}")
 
     nodes.append(
         helper.make_node(
@@ -245,7 +241,6 @@ def symbolic_add_quant(self, ilayer, y, a, b):
 @register_node("torch.Tensor.__add__")
 def symbolic_add(a, ilayer, y, b):
     register_tensor(y)
-    print(f"   --> Add{ilayer} -> Input {get_tensor_id(a)} + {get_tensor_id(b)}, Output {get_tensor_id(y)}")
 
     nodes.append(
         helper.make_node(
@@ -256,7 +251,6 @@ def symbolic_add(a, ilayer, y, b):
 @register_node("spconv.SparseConvTensor.dense")
 def node_sparse_conv_tensor_dense(self, ilayer, y):
     register_tensor(y)
-    print(f"   --> ToDense{ilayer}[{self.spatial_shape}][{list(y.size())}] -> Input {get_tensor_id(self)}, Output {get_tensor_id(y)}")
     
     format = "xyz"
     if inverse_indices:
@@ -274,7 +268,6 @@ def node_sparse_conv_tensor_dense(self, ilayer, y):
 @register_node("torch.Tensor.reshape")
 def node_view(self, ilayer, y, *dims):
     register_tensor(y)
-    print(f"   --> Reshape{ilayer}[{dims}] -> Input {get_tensor_id(self)}, Output {get_tensor_id(y)}")
 
     nodes.append(
         helper.make_node(
@@ -286,7 +279,6 @@ def node_view(self, ilayer, y, *dims):
 @register_node("torch.Tensor.permute")
 def node_permute(self, ilayer, y, *dims):
     register_tensor(y)
-    print(f"   --> Permute{ilayer}[{dims}][{list(y.shape)}] -> Input {get_tensor_id(self)}, Output {get_tensor_id(y)}")
 
     nodes.append(
         helper.make_node(
@@ -295,9 +287,6 @@ def node_permute(self, ilayer, y, *dims):
         )
     )
 
-def printtensor(x):
-    x = x.features
-    print(x.min().item(), x.max().item(), x.std().item(), x.mean().item())
 
 def make_model_forward_hook(self, inverse_indices=False):
     def impl(voxel_features, coors, batch_size, **kwargs):
@@ -376,7 +365,7 @@ def inverse_model(model : nn.Module):
             module.output_padding = module.output_padding[::-1]
 
 def inference_and_save_tensor(model : nn.Module, voxels, coors, batch_size, inverse, save_tensor):
-    # process model weight/stride/padding/output_padding/dilation etc...
+    # 导出前按 inverse 调整坐标轴与卷积参数
     if inverse:
         coors = coors[:, [0, 3, 2, 1]]
         inverse_model(model)
@@ -384,21 +373,15 @@ def inference_and_save_tensor(model : nn.Module, voxels, coors, batch_size, inve
     spatial_shape = model.sparse_shape
     model.forward = make_model_forward_hook(model, inverse)
 
-    print("> Do inference...")
     with torch.no_grad():
         y = model(voxels, coors, batch_size)
 
-    print("> Do save tensor, The purpose of this operation is to verify the inference result of C++")
-    print(f"   --> Save inference input voxels to {save_tensor}.voxels, voxels.shape = {voxels.shape}")
     tensor.save(voxels, f"{save_tensor}.voxels")
 
-    print(f"   --> Save inference input coors to {save_tensor}.coors, coors.shape = {coors.shape}")
     tensor.save(coors,  f"{save_tensor}.coors")
 
-    print(f"   --> Save inference output to {save_tensor}.dense, output.shape = {y.shape}")
     tensor.save(y,      f"{save_tensor}.dense")
     
-    print(f"   --> Save spatial_shape is {spatial_shape}, batch size is {batch_size}")
 
 
 def export_onnx(model : nn.Module, voxels, coors, batch_size, inverse, save_onnx):
@@ -426,15 +409,12 @@ def export_onnx(model : nn.Module, voxels, coors, batch_size, inverse, save_onnx
 
     model.forward = make_model_forward_hook(model, inverse)
 
-    print("Tracing model inference...")
-    print("> Do inference...")
     with torch.no_grad():
         register_tensor(voxels)
         enable_trace = True
         y = model(voxels, coors, batch_size)
         enable_trace = False
 
-    print("Tracing done!")
     inputs = [
         helper.make_value_info(
             name="0",
@@ -469,7 +449,7 @@ def export_onnx(model : nn.Module, voxels, coors, batch_size, inverse, save_onnx
 
     model = helper.make_model(graph, opset_imports=opset, producer_name="pytorch", producer_version="1.9")
     onnx.save_model(model, save_onnx)
-    print(f"🚀 The export is completed. ONNX save as {save_onnx} 🤗, Have a nice day~")
+    print(f"[export] scn -> {save_onnx}")
 
     # clean memory
     avoid_reuse_container = []

@@ -174,11 +174,10 @@ std::shared_ptr<bevfusion::Core> create_core(const std::string& model, const std
 
   bevfusion::lidar::SCNParameter scn;
   scn.voxelization = voxelization;
-  // 调试：BEVFUSION_SCN_ONNX 可指定 SCN onnx（对比 inverse=False/True 导出）
+  // 调试：BEVFUSION_SCN_ONNX 指定 SCN onnx；BEVFUSION_SCN_ORDER=ZYX 切换索引序
   const char* scn_onnx = getenv("BEVFUSION_SCN_ONNX");
   scn.model = scn_onnx != nullptr ? scn_onnx
                                   : nv::format("model/%s/lidar.backbone.xyz.onnx", model.c_str());
-  // 调试：BEVFUSION_SCN_ORDER=ZYX 切换体素索引序（默认 XYZ）
   const char* scn_order = getenv("BEVFUSION_SCN_ORDER");
   scn.order = (scn_order != nullptr && strcmp(scn_order, "ZYX") == 0)
                   ? bevfusion::lidar::CoordinateOrder::ZYX
@@ -250,7 +249,6 @@ int main(int argc, char** argv) {
   cudaStreamCreate(&stream);
  
   core->print();
-  core->set_timer(true);
 
   // Load matrix to host
   auto camera2lidar = nv::Tensor::load(nv::format("%s/camera2lidar.tensor", data), false);
@@ -268,19 +266,23 @@ int main(int argc, char** argv) {
   // warmup
   auto bboxes =
       core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0), stream);
-
-  // evaluate inference time
   for (int i = 0; i < 5; ++i) {
     core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0), stream);
   }
 
-  // print decoded 3d bboxes for ground-truth check
+  // 计时一遍（只打印一次）
+  core->set_timer(true);
+  bboxes = core->forward((const unsigned char**)images.data(), lidar_points.ptr<nvtype::half>(), lidar_points.size(0), stream);
+  core->set_timer(false);
+
   printf("[main] %zu bboxes\n", bboxes.size());
-  for (size_t i = 0; i < bboxes.size(); ++i) {
-    auto& b = bboxes[i];
-    printf("  box[%zu] id=%d score=%.3f pos=(%.2f,%.2f,%.2f) size=(%.2f,%.2f,%.2f) rot=%.3f vel=(%.2f,%.2f)\n",
-           i, b.id, b.score, b.position.x, b.position.y, b.position.z,
-           b.size.w, b.size.l, b.size.h, b.z_rotation, b.velocity.vx, b.velocity.vy);
+  if (getenv("BEVFUSION_PRINT_BOXES")) {  // 需要逐框文本时设置
+    for (size_t i = 0; i < bboxes.size(); ++i) {
+      auto& b = bboxes[i];
+      printf("  box[%zu] id=%d score=%.3f pos=(%.2f,%.2f,%.2f) size=(%.2f,%.2f,%.2f) rot=%.3f vel=(%.2f,%.2f)\n",
+             i, b.id, b.score, b.position.x, b.position.y, b.position.z,
+             b.size.w, b.size.l, b.size.h, b.z_rotation, b.velocity.vx, b.velocity.vy);
+    }
   }
 
   // visualize and save to jpg

@@ -33,11 +33,8 @@
 #include <string>
 #include <vector>
 
-// 调试：BEVFUSION_DUMP_DIR 环境变量设置时，落盘中间张量（格式与
-// deploy/tools/export_example_data.py save_tensor 一致：3xint32 header +
-// dims + 原始数据），供 deploy/tools/model_diff.py --backend trt-full 对比。
-// dev 为 device 指针：先 D2H 拷贝再写盘（直接 fwrite 设备内存会段错误）。
-// stream 沿用 forward 接口的 void* 风格（内部 cast）。
+// 调试：BEVFUSION_DUMP_DIR 设置时落盘中间张量（save_tensor 格式），
+// 供 deploy/tool/model_diff.py --backend trt-full 对比。
 static void dump_mid_tensor(const char* name, const nvtype::half* dev,
                             const std::vector<int>& shape, void* stream) {
   const char* dir = getenv("BEVFUSION_DUMP_DIR");

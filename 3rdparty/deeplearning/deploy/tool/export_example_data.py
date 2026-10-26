@@ -1,20 +1,9 @@
-"""导出 CUDA-BEVFusion 输入格式（example-data：.tensor + jpg）。
+"""导出 C++ 推理输入（example-data：.tensor + 6 相机 jpg）。
 
-对应 deploy/src/main.cpp 的输入契约：
-  camera2lidar.tensor      (6,4,4) float32   camera -> lidar 外参
-  camera_intrinsics.tensor (6,4,4) float32   内参（4x4，下 3 行为旋转/平移）
-  lidar2image.tensor       (6,4,4) float32   lidar -> 图像投影矩阵
-  img_aug_matrix.tensor    (6,4,4) float32   图像增强矩阵
-  points.tensor            (N,5)  float16   点云（x,y,z,intensity,time）
-  0-FRONT.jpg ... 5-BACK_RIGHT.jpg           6 张原始相机图（1600x900）
-
-用法：
+用法（3rdparty/deeplearning 下）：
   python deploy/tool/export_example_data.py configs/det_convfuser.py \
-      ckpts/bevfusion-det-bf.pth --sample-index 0 --out-dir outputs/example-data
-
-生成后：
-  cd 3rdparty/deeplearning/deploy && . tool/environment.sh && \
-  bash tool/run.sh（或 ./build/bevfusion <data-dir> resnet50int8 fp16）
+      ckpts/bevfusion-det-bf.pth --out-dir outputs/example-data
+之后：cd deploy && bash tool/run.sh
 """
 
 import argparse
@@ -23,25 +12,12 @@ import os.path as osp
 import shutil
 import sys
 
-sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))  # deeplearning/
-sys.path.insert(0, osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))))  # 3rdparty/
+_HERE = osp.dirname(osp.abspath(__file__))
+for _path in (_HERE, osp.dirname(osp.dirname(_HERE))):  # tool/, deeplearning/
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
-import numpy as np
-
-DTYPE_MAP = {"float32": 3, "float16": 2, "int32": 1, "int64": 4}
-MAGIC = 0x33FF1101
-
-
-def save_tensor(arr, path):
-    """与 CUDA-BEVFusion common/tensor.hpp / tool/tensor.py 一致的二进制格式。"""
-    arr = np.ascontiguousarray(arr)
-    dtype = str(arr.dtype)
-    assert dtype in DTYPE_MAP, f"unsupported dtype {dtype}"
-    with open(path, "wb") as f:
-        f.write(np.array([MAGIC, arr.ndim, DTYPE_MAP[dtype]], dtype=np.int32).tobytes())
-        f.write(np.array(arr.shape, dtype=np.int32).tobytes())
-        f.write(arr.tobytes())
-
+from common import save_tensor  # noqa: E402
 
 CAM_NAMES = ["FRONT", "FRONT_RIGHT", "FRONT_LEFT", "BACK", "BACK_LEFT", "BACK_RIGHT"]
 
@@ -71,34 +47,18 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    # 6 张原始相机图（1600x900）
     filenames = list(metas[0]["filename"]) if isinstance(metas, (list, tuple)) \
         else list(metas["filename"])
     for idx, path in enumerate(filenames):
-        name = f"{idx}-{CAM_NAMES[idx]}.jpg"
-        shutil.copyfile(path, osp.join(args.out_dir, name))
-        print(f"[example] {name} <- {path}")
+        shutil.copyfile(path, osp.join(args.out_dir, f"{idx}-{CAM_NAMES[idx]}.jpg"))
 
-    # 相机/投影矩阵（去 batch 维，float32）
-    mats = {
-        "camera2lidar": "camera2lidar",
-        "camera_intrinsics": "camera_intrinsics",
-        "lidar2image": "lidar2image",
-        "img_aug_matrix": "img_aug_matrix",
-    }
-    for out_name, key in mats.items():
-        t = batch[key][0].detach().cpu().float().numpy()  # (6,4,4)
-        save_tensor(t, osp.join(args.out_dir, f"{out_name}.tensor"))
-        print(f"[example] {out_name}.tensor {t.shape} {t.dtype}")
+    for out_name in ("camera2lidar", "camera_intrinsics", "lidar2image", "img_aug_matrix"):
+        save_tensor(batch[out_name][0].detach().cpu().float().numpy(),
+                    osp.join(args.out_dir, f"{out_name}.tensor"))
 
-    # 点云 (N,5) float16
     pts = batch["points"][0].detach().cpu().half().numpy()
     save_tensor(pts, osp.join(args.out_dir, "points.tensor"))
-    print(f"[example] points.tensor {pts.shape} {pts.dtype} (N={pts.shape[0]})")
-
-    print(f"[example] done -> {osp.join(args.out_dir)}")
-    print("         cd 3rdparty/deeplearning/deploy && . tool/environment.sh")
-    print("         ./build/bevfusion <上述目录> resnet50 fp16")
+    print(f"[example] {args.out_dir} (points {pts.shape})")
 
 
 if __name__ == "__main__":

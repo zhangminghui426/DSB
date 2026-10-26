@@ -1,144 +1,76 @@
-#!/usr/bin/env python
-"""三端模型对比：torch（训练接口）<-> onnxruntime <-> TensorRT，逐模块对拍。
+"""torch / onnxruntime / TensorRT 三端对比：逐模块精度、延时、可视化。
 
-目标：定位 C++ 部署（TRT plan）与训练模型（pth）的差异环节。链：
-  img+points+矩阵 -> camera.backbone(feature+depth_weights) -> bev_pool(bev360)
-  -> downsample(cam_bev) + sparse(lidar_bev) -> fuser(middle) -> head.bbox(score/rot/...)
-  -> decode(3D 框)
-
-后端：
-  torch  训练接口全链（build_dataset + collate_fn，sample 与 example-data 同帧），dump 每模块张量
-  onnx   5 个 onnx（CUDA-BEVFusion 结构）用 onnxruntime 逐模块跑（输入用 torch 上游 dump）
-  trt    4 个 plan（C++ 部署引擎）用 tensorrt python 逐模块跑（输入同 onnx）
-  diff   三端逐模块 max-abs / rel 对比 + 框对比
-
-用法（3rdparty/deeplearning 下，先跑 torch 再 onnx/trt/diff；或 --backend all）：
+用法（3rdparty/deeplearning 下）：
   python deploy/tool/model_diff.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth \
-      --backend all --onnx-dir outputs/onnx --engine-dir deploy/model/resnet50/build \
-      --dump-dir outputs/model_diff --sample-index 0
+      --backend all --dump-dir outputs/model_diff
+
+  --backend torch   训练接口全链，落盘各模块张量/框
+  --backend onnx    onnxruntime 跑 4 张图（输入用 torch dump）
+  --backend trt     TensorRT 跑 4 个 plan（输入同上）
+  --backend bench   torch/onnx/trt 逐模块延时 -> benchmark.json
+  --backend diff    打印精度对比表
+  --backend vis     框叠加图（BEV + 6 相机）
+  --backend report  延时/精度对比图 -> report.png
+
+产物（--dump-dir）：{torch,onnx,trt}/*.npy、benchmark.json、report.png、
+                    onnx_vis.jpg、trt_vis.jpg
 """
+
 import argparse
+import json
 import os
 import os.path as osp
+import sys
+import time
 
 import numpy as np
 import torch
-from torch import nn
 
+_HERE = osp.dirname(osp.abspath(__file__))
+_DL_ROOT = osp.dirname(osp.dirname(_HERE))  # 3rdparty/deeplearning
+for path in (_DL_ROOT, _HERE):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
-# ------------------------------------------------------------------ 对拍专用 wrapper
-# （原 deploy/export_bf.py，已内联：BF 结构与 CUDA-BEVFusion 引擎输入对齐）
-class CamBackboneBf(nn.Module):
-    """backbone + neck + dtransform + depthnet 合并（CUDA-BEVFusion 结构）。
+from common import load_tensor, parse_cpp_boxes, save_tensor  # noqa: E402
+from deploy.scripts.export import (  # noqa: E402
+    CamBackboneBf, CamVtransformDet, DownsampleBf, FuserDecoder, HeadBboxBf)
 
-    forward(img, depth):
-        img (B,N,3,H,W) + depth (B,N,1,H,W)
-        -> camera_feature (B,N,fH,fW,C)（HWC，bevpool kernel 按此布局）
-        -> camera_depth_weights (B,N,D,fH,fW)（已 softmax）
-    """
-
-    def __init__(self, model):
-        super().__init__()
-        self.backbone = model.encoders["camera"]["backbone"]
-        self.neck = model.encoders["camera"]["neck"]
-        self.vt = model.encoders["camera"]["vtransform"]
-        self.D = self.vt.D
-        self.C = self.vt.C
-
-    def forward(self, img, depth):
-        B, N, C, H, W = img.size()
-        x = img.view(B * N, C, H, W)
-        x = self.backbone(x)
-        x = self.neck(x)
-        if not torch.is_tensor(x):
-            x = x[0]
-        BN, C, fH, fW = x.size()
-        feat = x.view(B, N, C, fH, fW)
-
-        d = depth.view(B * N, *depth.shape[2:])
-        d = self.vt.dtransform(d)
-        x = torch.cat([d, feat.view(B * N, C, fH, fW)], dim=1)
-        x = self.vt.depthnet(x)  # (B*N, D+C, fH, fW)
-        x = x.view(B, N, -1, fH, fW)
-        depth_weights = x[:, :, : self.D].softmax(dim=2)      # (B,N,D,fH,fW)
-        feature = x[:, :, self.D : self.D + self.C].permute(0, 1, 3, 4, 2)
-        return feature, depth_weights                        # (B,N,fH,fW,C)
-
-
-class DownsampleBf(nn.Module):
-    """bev_pool 输出 (1,80,360,360) -> (1,80,180,180)（= vtransform.downsample）。"""
-
-    def __init__(self, model):
-        super().__init__()
-        self.downsample = model.encoders["camera"]["vtransform"].downsample
-
-    def forward(self, feat_in):
-        return self.downsample(feat_in)
-
-
-class HeadBboxBf(nn.Module):
-    """transfusion head 原始预测（decode 留在 C++）。
-
-    forward(middle): (1,512,180,180)
-        -> (score, rot, dim, reg, height, vel)
-        score = heatmap.sigmoid() * query_heatmap_score * one_hot   (B,num_classes,num)
-    """
-
-    def __init__(self, model):
-        super().__init__()
-        self.head = model.heads["object"]
-        self.head.onnx_export = True  # unfold/amax 代替 max_pool2d
-        self.num_classes = self.head.num_classes
-
-    def forward(self, x):
-        pd = self.head.forward_single(x, None, None)[0]
-        one_hot = (
-            torch.nn.functional.one_hot(
-                self.head.query_labels.long(), self.num_classes
-            )
-            .permute(0, 2, 1)
-            .float()
-        )
-        score = pd["heatmap"].sigmoid() * pd["query_heatmap_score"] * one_hot
-        return score, pd["rot"], pd["dim"], pd["center"], pd["height"], pd["vel"]
-
-
-def load_tensor(p):
-    with open(p, "rb") as f:
-        h = np.fromfile(f, dtype="<i4", count=3)
-        ndim, dtypei = int(h[1]), int(h[2])
-        dims = tuple(int(v) for v in np.fromfile(f, dtype="<i4", count=ndim))
-        dt = {1: "<i4", 2: "<f2", 3: "<f4", 4: "<i8",
-              5: "<u8", 6: "<u4", 7: "<i1", 8: "<u1"}[dtypei]
-        return np.fromfile(f, dtype=dt).reshape(dims)
+# 4 个可部署图的输入/输出 dump 名（与 export.py 的 BF_IO 对应）
+FEEDS = {
+    "camera.backbone": {"img": "img", "depth": "depth"},
+    "camera.vtransform": {"feat_in": "bev360"},
+    "fuser": {"camera": "cam_bev", "lidar": "lidar_bev"},
+    "head.bbox": {"middle": "middle"},
+}
+OUTS = {
+    "camera.backbone": ["camera_feature", "camera_depth_weights"],
+    "camera.vtransform": ["cam_bev"],
+    "fuser": ["middle"],
+    "head.bbox": ["score", "rot", "dim", "reg", "height", "vel"],
+}
+GRAPHS = list(FEEDS)
+STAGE_TENSORS = {
+    "camera.backbone": ["camera_feature", "camera_depth_weights"],
+    "camera.vtransform": ["cam_bev"],
+    "fuser": ["middle"],
+    "head.bbox": ["score", "rot", "dim", "reg", "height", "vel"],
+}
+CAM_NAMES = ["FRONT", "FRONT_RIGHT", "FRONT_LEFT", "BACK", "BACK_LEFT", "BACK_RIGHT"]
 
 
 def dump(name, arr, dump_dir, sub):
-    d = os.path.join(dump_dir, sub)
-    os.makedirs(d, exist_ok=True)
-    np.save(os.path.join(d, name + ".npy"), np.asarray(arr))
-    print(f"[dump] {sub}/{name}.npy {np.asarray(arr).shape}")
+    os.makedirs(osp.join(dump_dir, sub), exist_ok=True)
+    np.save(osp.join(dump_dir, sub, name + ".npy"), np.asarray(arr))
 
 
 def load_dump(name, dump_dir, sub="torch"):
-    return np.load(os.path.join(dump_dir, sub, name + ".npy"))
-
-
-def dump_bf_tensor(arr, path):
-    """save_tensor 格式（与 C++ BEVFUSION_DUMP_DIR / export_example_data 一致）。"""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    arr = np.ascontiguousarray(arr)
-    with open(path, "wb") as f:
-        f.write(np.array([0x33FF1101, arr.ndim, {"int32": 1, "float16": 2, "float32": 3}[arr.dtype.name]],
-                         dtype=np.int32).tobytes())
-        f.write(np.array(arr.shape, dtype=np.int32).tobytes())
-        f.write(arr.tobytes())
+    return np.load(osp.join(dump_dir, sub, name + ".npy"))
 
 
 def load_model_only(cfg, ckpt):
-    """只加载模型（onnx/trt 后端 decode 用），不重跑 torch dump。"""
-    from scripts.config import load_config
     from models import build_model
+    from scripts.config import load_config
     from scripts.trainer import load_model_checkpoint
     cfg = load_config(cfg)
     model = build_model(cfg.model).cuda().eval()
@@ -146,9 +78,9 @@ def load_model_only(cfg, ckpt):
     return model
 
 
-# ---------------------------------------------------------------- torch 后端
+# ---------------------------------------------------------------- torch
 def project_depth(batch, vt):
-    """BaseDepthTransform 前段：点云 -> 稀疏深度图 [B,N,1,H,W]（与训练推理一致）。"""
+    """点云 -> 稀疏深度图 (B,N,1,H,W)。"""
     img = batch["img"]
     B, N = img.shape[0], img.shape[1]
     H, W = vt.image_size
@@ -177,42 +109,34 @@ def project_depth(batch, vt):
 
 
 def backend_torch(cfg, ckpt, dump_dir, sample_index=0, cpp_dir="outputs/model_diff/cpp"):
-    from scripts.config import load_config
-    from models import build_model
-    from scripts.trainer import load_model_checkpoint, to_device
     from datasets import build_dataset, collate_fn
-    from deploy.scripts.export import CamVtransformDet, FuserDecoder
+    from models import build_model
+    from scripts.config import load_config
+    from scripts.trainer import load_model_checkpoint, to_device
 
     cfg = load_config(cfg)
     model = build_model(cfg.model).cuda().eval()
-    msg, _ = load_model_checkpoint(model, ckpt, strict=True)
-    print("loaded %s missing=%d unexpected=%d" % (ckpt, len(msg.missing_keys), len(msg.unexpected_keys)))
+    load_model_checkpoint(model, ckpt, strict=True)
 
-    ds = build_dataset(cfg.data.val)
-    batch = to_device(collate_fn([ds[sample_index]]), "cuda")
-
+    batch = to_device(collate_fn([build_dataset(cfg.data.val)[sample_index]]), "cuda")
     vt = model.encoders["camera"]["vtransform"]
     img = batch["img"]
     B, N, C, H, W = img.shape
-    half = lambda t: t.detach().cpu().numpy()  # fp32 dump（onnx 输入 float32）
+    np_dump = lambda t: t.detach().cpu().numpy()
 
-    # 1. depth 投影 + camera.backbone（feature HWC + depth_weights）
+    # camera.backbone -> bev_pool/downsample -> lidar sparse -> fuser -> head
     depth = project_depth(batch, vt)
-    dump("img", half(img), dump_dir, "torch")
-    dump("depth", half(depth), dump_dir, "torch")
-    cam = CamBackboneBf(model)
-    feature, depth_weights = cam(img, depth)  # (B,N,fH,fW,C) / (B,N,D,fH,fW)
-    dump("camera_feature", half(feature), dump_dir, "torch")
-    dump("camera_depth_weights", half(depth_weights), dump_dir, "torch")
+    dump("img", np_dump(img), dump_dir, "torch")
+    dump("depth", np_dump(depth), dump_dir, "torch")
+    feature, depth_weights = CamBackboneBf(model)(img, depth)
+    dump("camera_feature", np_dump(feature), dump_dir, "torch")
+    dump("camera_depth_weights", np_dump(depth_weights), dump_dir, "torch")
 
-    # 2. bev_pool -> bev360
-    bb = model.encoders["camera"]["backbone"]
-    neck = model.encoders["camera"]["neck"]
-    x = bb(img.view(B * N, C, H, W))
-    x = neck(x)
+    bb, neck = model.encoders["camera"]["backbone"], model.encoders["camera"]["neck"]
+    x = neck(bb(img.view(B * N, C, H, W)))
     x = x[0] if not torch.is_tensor(x) else x
     feats = x.view(B, N, *x.shape[1:])
-    depthnet_out = CamVtransformDet(model)(feats, depth)  # (B*N, D+C, fH, fW)
+    depthnet_out = CamVtransformDet(model)(feats, depth)
     D, CC = vt.D, vt.C
     dw = depthnet_out[:, :D].softmax(1).view(B, N, D, *feats.shape[3:])
     fc = depthnet_out[:, D:].view(B, N, CC, *feats.shape[3:])
@@ -224,273 +148,379 @@ def backend_torch(cfg, ckpt, dump_dir, sample_index=0, cpp_dir="outputs/model_di
         extra_rots=batch["lidar_aug_matrix"][..., :3, :3],
         extra_trans=batch["lidar_aug_matrix"][..., :3, 3],
     )
-    bev360 = vt.bev_pool(geom, xpool)  # (B, C, 360, 360)
-    dump("bev360", half(bev360), dump_dir, "torch")
-    cam_bev = DownsampleBf(model)(bev360)  # (B, C, 180, 180)
-    dump("cam_bev", half(cam_bev), dump_dir, "torch")
+    bev360 = vt.bev_pool(geom, xpool)
+    dump("bev360", np_dump(bev360), dump_dir, "torch")
+    cam_bev = DownsampleBf(model)(bev360)
+    dump("cam_bev", np_dump(cam_bev), dump_dir, "torch")
 
-    # 3. lidar sparse
     feats_l, coords, sizes = model.voxelize(batch["points"], "lidar")
-    batch_size = coords[-1, 0] + 1
-    lidar_bev = model.encoders["lidar"]["backbone"](feats_l, coords, batch_size, sizes=sizes)
-    dump("lidar_bev", half(lidar_bev), dump_dir, "torch")
-    # voxelize 输出落盘（save_tensor 格式）→ C++ 侧 BEVFUSION_DUMP_DIR 读到后
-    # override 引擎输入，隔离"voxelize 差异 vs SCN 引擎差异"。
-    # 本仓库 sparse encoder 的 coords 为 [batch, x, y, z]（与 C++ XYZ voxelize
-    # 一致），C++ 侧原样使用，不再做轴变换。
-    dump_bf_tensor(coords.detach().cpu().numpy().astype(np.int32),
-                   os.path.join(cpp_dir, "torch_lidar_coords"))
-    dump_bf_tensor(feats_l.detach().cpu().numpy().astype(np.float16),
-                   os.path.join(cpp_dir, "torch_lidar_feats"))
+    lidar_bev = model.encoders["lidar"]["backbone"](
+        feats_l, coords, coords[-1, 0] + 1, sizes=sizes)
+    dump("lidar_bev", np_dump(lidar_bev), dump_dir, "torch")
+    save_tensor(coords.detach().cpu().numpy().astype(np.int32),
+                osp.join(cpp_dir, "torch_lidar_coords"))
+    save_tensor(feats_l.detach().cpu().numpy().astype(np.float16),
+                osp.join(cpp_dir, "torch_lidar_feats"))
 
-    # 4. fuser + decoder
-    middle = FuserDecoder(model)(cam_bev, lidar_bev)  # (B,512,180,180)
-    dump("middle", half(middle), dump_dir, "torch")
+    middle = FuserDecoder(model)(cam_bev, lidar_bev)
+    dump("middle", np_dump(middle), dump_dir, "torch")
 
-    # 5. head.bbox 输出（decode 留在 C++/get_bboxes）
     head = model.heads["object"]
     head.onnx_export = True
-    score, rot, dim, reg, height, vel = HeadBboxBf(model)(middle)
-    for name, t in [("score", score), ("rot", rot), ("dim", dim),
-                    ("reg", reg), ("height", height), ("vel", vel)]:
-        dump(name, half(t), dump_dir, "torch")
+    for name, t in zip(["score", "rot", "dim", "reg", "height", "vel"],
+                       HeadBboxBf(model)(middle)):
+        dump(name, np_dump(t), dump_dir, "torch")
 
-    # 6. decode 3D 框（torch 训练侧 decode，与 C++ head-transbbox 对比）
     pred_dicts = head([middle], [{}])
     bboxes = head.get_bboxes(pred_dicts, batch["metas"])
-    b = bboxes[0][0].tensor.detach().cpu().numpy()
-    s = bboxes[0][1].detach().cpu().numpy()
-    l = bboxes[0][2].detach().cpu().numpy()
-    print(f"[torch] {len(b)} boxes")
-    for i in range(len(b)):
-        print("  box[%d] id=%d score=%.3f pos=(%.2f,%.2f,%.2f) size=(%.2f,%.2f,%.2f) rot=%.3f"
-              % (i, int(l[i]), s[i], b[i, 0], b[i, 1], b[i, 2],
-                 b[i, 3], b[i, 4], b[i, 5], b[i, 6]))
-    with open(os.path.join(dump_dir, "torch", "boxes.txt"), "w") as f:
-        for i in range(len(b)):
-            f.write("box[%d] id=%d score=%.3f pos=(%.2f,%.2f,%.2f) size=(%.2f,%.2f,%.2f) rot=%.3f\n"
-                    % (i, int(l[i]), s[i], b[i, 0], b[i, 1], b[i, 2],
-                       b[i, 3], b[i, 4], b[i, 5], b[i, 6]))
+    boxes = bboxes[0][0].tensor.detach().cpu().numpy()
+    scores = bboxes[0][1].detach().cpu().numpy()
+    labels = bboxes[0][2].detach().cpu().numpy()
     dump("query_labels", head.query_labels.detach().cpu().numpy(), dump_dir, "torch")
-    dump("boxes", np.concatenate([b, s[:, None], l[:, None]], axis=1), dump_dir, "torch")  # [N,11]
+    dump("boxes", np.concatenate([boxes, scores[:, None], labels[:, None]], axis=1),
+         dump_dir, "torch")
+    print(f"[torch] dumps -> {dump_dir}/torch, {len(scores)} boxes")
     return model
 
 
-# ---------------------------------------------------------------- onnx 后端
+# ---------------------------------------------------------------- onnx / trt
 def backend_onnx(onnx_dir, dump_dir, model=None):
     import onnxruntime as ort
+
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-    feeds = {
-        "camera.backbone": {"img": "img", "depth": "depth"},
-        "camera.vtransform": {"feat_in": "bev360"},
-        "fuser": {"camera": "cam_bev", "lidar": "lidar_bev"},
-        "head.bbox": {"middle": "middle"},
-    }
-    outs = {
-        "camera.backbone": ["camera_feature", "camera_depth_weights"],
-        "camera.vtransform": ["cam_bev"],
-        "fuser": ["middle"],
-        "head.bbox": ["score", "rot", "dim", "reg", "height", "vel"],
-    }
-    for graph, feed_map in feeds.items():
-        path = os.path.join(onnx_dir, graph + ".onnx")
-        if not os.path.exists(path):
-            print(f"[onnx] SKIP {graph}: {path} missing")
+    for graph in GRAPHS:
+        path = osp.join(onnx_dir, graph + ".onnx")
+        if not osp.exists(path):
+            print(f"[onnx] skip {graph}: {path} missing")
             continue
         sess = ort.InferenceSession(path, providers=providers)
-        in_names = {i.name for i in sess.get_inputs()}
-        feed = {k: load_dump(v, dump_dir).astype(np.float32) for k, v in feed_map.items()}
-        res = sess.run(None, feed)
-        names = [o.name for o in sess.get_outputs()]
-        print(f"[onnx] {graph} in={list(feed)} out={names}")
-        for name, arr in zip(names, res):
-            out_key = outs[graph][0] if name in outs[graph] else None
-            # 按 onnx 输出名->我们命名约定（部分图输出顺序即约定顺序）
-        for j, arr in enumerate(res):
-            key = outs[graph][j] if j < len(outs[graph]) else names[j]
+        feed = {k: load_dump(v, dump_dir).astype(np.float32) for k, v in FEEDS[graph].items()}
+        outs = sess.run(None, feed)
+        for key, arr in zip(OUTS[graph], outs):
             dump(key, np.asarray(arr).astype(np.float32), dump_dir, "onnx")
+        print(f"[onnx] {graph} ok")
+    _decode_boxes(dump_dir, "onnx", model)
 
 
-# ---------------------------------------------------------------- trt 后端
-def _trt_session(engine_dir, graph):
+def _trt_plan_path(engine_dir, graph, head_plan=None):
+    if graph != "head.bbox":
+        return osp.join(engine_dir, graph + ".plan")
+    if head_plan:
+        return osp.join(engine_dir, head_plan)
+    for name in ("head.bbox.fp32.plan", "head.bbox.layernormplugin.plan", "head.bbox.plan"):
+        path = osp.join(engine_dir, name)
+        if osp.exists(path):
+            return path
+    return osp.join(engine_dir, "head.bbox.plan")
+
+
+def _trt_session(engine_dir, graph, head_plan=None):
     import tensorrt as trt
+
+    path = graph if osp.isabs(graph) or "/" in graph else _trt_plan_path(engine_dir, graph, head_plan)
     rt = trt.Runtime(trt.Logger(trt.Logger.ERROR))
-    # graph 可为完整路径（head.bbox.layernormplugin.plan）
-    path = graph if osp.isabs(graph) or "/" in graph else os.path.join(engine_dir, graph + ".plan")
     with open(path, "rb") as f:
         eng = rt.deserialize_cuda_engine(f.read())
     ctx = eng.create_execution_context()
     names = [eng.get_tensor_name(i) for i in range(eng.num_io_tensors)]
-    in_names = [n for n in names if eng.get_tensor_mode(n) == trt.TensorIOMode.INPUT]
-    out_names = [n for n in names if eng.get_tensor_mode(n) == trt.TensorIOMode.OUTPUT]
-    return ctx, in_names, out_names
-    # decode：onnx head 输出 + torch bbox_coder（filter=False + score>0.12 对齐 C++）
-    if model is not None and os.path.exists(os.path.join(dump_dir, "onnx", "score.npy")):
-        head = model.heads["object"]
-        ts = lambda k: torch.from_numpy(load_dump(k, dump_dir, "onnx")).float().cuda()
-        preds = head.bbox_coder.decode(ts("score"), ts("rot"), ts("dim"), ts("reg"),
-                                       ts("height"), ts("vel"), filter=False)
-        boxes = preds[0]["bboxes"].detach().cpu().numpy()
-        sc = preds[0]["scores"].detach().cpu().numpy()
-        keep = sc > 0.12
-        np.save(os.path.join(dump_dir, "onnx", "boxes.npy"), boxes[keep])
-        np.save(os.path.join(dump_dir, "onnx", "scores.npy"), sc[keep])
-        print(f"[onnx] {int(keep.sum())} boxes (score>0.12)")
+    ins = [n for n in names if eng.get_tensor_mode(n) == trt.TensorIOMode.INPUT]
+    outs = [n for n in names if eng.get_tensor_mode(n) == trt.TensorIOMode.OUTPUT]
+    return ctx, ins, outs
+
+
+def _bind_trt(ctx, in_names, out_names, graph, dump_dir):
+    """按 dump 分配 TRT IO buffer，返回 {name: tensor}。"""
+    buffers = {}
+    for name in in_names:
+        arr = load_dump(FEEDS[graph][name], dump_dir).astype(np.float16)
+        t = torch.from_numpy(np.ascontiguousarray(arr)).cuda()
+        buffers[name] = t
+        ctx.set_tensor_address(name, t.data_ptr())
+    for name in out_names:
+        t = torch.empty(tuple(ctx.get_tensor_shape(name)), dtype=torch.float16, device="cuda")
+        buffers[name] = t
+        ctx.set_tensor_address(name, t.data_ptr())
+    return buffers
+
 
 def backend_trt(engine_dir, dump_dir, model=None, head_plan=None):
-    import tensorrt as trt
-    graphs = ["camera.backbone", "camera.vtransform", "fuser", "head.bbox"]
-    feed_map = {
-        "camera.backbone": {"img": "img", "depth": "depth"},
-        "camera.vtransform": {"feat_in": "bev360"},
-        "fuser": {"camera": "cam_bev", "lidar": "lidar_bev"},
-        "head.bbox": {"middle": "middle"},
-    }
-    out_map = {
-        "camera.backbone": ["camera_feature", "camera_depth_weights"],
-        "camera.vtransform": ["cam_bev"],
-        "fuser": ["middle"],
-        "head.bbox": ["score", "rot", "dim", "reg", "height", "vel"],
-    }
     stream = torch.cuda.current_stream().cuda_stream
-    for graph in graphs:
-        path = os.path.join(engine_dir, graph + ".plan")
-        # head.bbox 优先 layernormplugin 版（myelin fusion 有 TRT bug），可用 --head-plan 指定
-        if graph == "head.bbox":
-            if head_plan:
-                path = os.path.join(engine_dir, head_plan)
-            else:
-                alt = os.path.join(engine_dir, "head.bbox.layernormplugin.plan")
-                if os.path.exists(alt):
-                    path = alt
-        if not os.path.exists(path):
-            print(f"[trt] SKIP {graph}: {path} missing")
+    for graph in GRAPHS:
+        path = _trt_plan_path(engine_dir, graph, head_plan)
+        if not osp.exists(path):
+            print(f"[trt] skip {graph}: {path} missing")
             continue
         ctx, in_names, out_names = _trt_session(engine_dir, path)
-        buffers = {}
-        for name in in_names:
-            feed_key = next(k for k, v in feed_map[graph].items() if v == name) \
-                if name in feed_map[graph].values() else name
-            src = feed_map[graph].get(feed_key, feed_key)
-            arr = load_dump(src, dump_dir).astype(np.float16)
-            t = torch.from_numpy(np.ascontiguousarray(arr)).cuda()
-            buffers[name] = t
-            ctx.set_tensor_address(name, t.data_ptr())
-        for name in out_names:
-            shape = tuple(ctx.get_tensor_shape(name))
-            t = torch.empty(shape, dtype=torch.float16, device="cuda")
-            buffers[name] = t
-            ctx.set_tensor_address(name, t.data_ptr())
-        ok = ctx.execute_async_v3(stream)
+        buffers = _bind_trt(ctx, in_names, out_names, graph, dump_dir)
+        if not ctx.execute_async_v3(stream):
+            print(f"[trt] {graph} execute failed")
+            continue
         torch.cuda.synchronize()
-        if not ok:
-            print(f"[trt] {graph} execute failed"); continue
-        print(f"[trt] {graph} in={in_names} out={out_names}")
-        for j, name in enumerate(out_names):
-            key = out_map[graph][j] if j < len(out_map[graph]) else name
+        for key, name in zip(OUTS[graph], out_names):
             dump(key, buffers[name].cpu().numpy(), dump_dir, "trt")
-
-    # decode：trt head 输出 + torch bbox_coder（filter=False + score>0.12 对齐 C++）
-    if model is not None and os.path.exists(os.path.join(dump_dir, "trt", "score.npy")):
-        head = model.heads["object"]
-        ts = lambda k: torch.from_numpy(load_dump(k, dump_dir, "trt")).float().cuda()
-        preds = head.bbox_coder.decode(ts("score"), ts("rot"), ts("dim"), ts("reg"),
-                                       ts("height"), ts("vel"), filter=False)
-        boxes = preds[0]["bboxes"].detach().cpu().numpy()
-        sc = preds[0]["scores"].detach().cpu().numpy()
-        lb = preds[0]["labels"].detach().cpu().numpy()
-        mask = sc > 0.12
-        boxes, sc, lb = boxes[mask], sc[mask], lb[mask]
-        dump("boxes", np.concatenate([boxes, sc[:, None], lb[:, None]], axis=1), dump_dir, "trt")
-        print(f"[trt] {len(sc)} boxes (score>0.12)")
-        for i in range(len(sc)):
-            print("  box[%d] id=%d score=%.3f pos=(%.2f,%.2f,%.2f) size=(%.2f,%.2f,%.2f) rot=%.3f"
-                  % (i, int(lb[i]), sc[i], boxes[i, 0], boxes[i, 1], boxes[i, 2],
-                     boxes[i, 3], boxes[i, 4], boxes[i, 5], boxes[i, 6]))
+        print(f"[trt] {graph} ok")
+    _decode_boxes(dump_dir, "trt", model)
 
 
-# ---------------------------------------------------------------- 可视化对比
-CAM_NAMES = ["FRONT", "FRONT_RIGHT", "FRONT_LEFT", "BACK", "BACK_LEFT", "BACK_RIGHT"]
+def _decode_boxes(dump_dir, sub, model=None):
+    """head 输出 -> 3D 框（filter=False + score>0.12，与 C++ 对齐）。"""
+    if model is None or not osp.exists(osp.join(dump_dir, sub, "score.npy")):
+        return
+    head = model.heads["object"]
+    t = lambda k: torch.from_numpy(load_dump(k, dump_dir, sub)).float().cuda()
+    preds = head.bbox_coder.decode(t("score"), t("rot"), t("dim"), t("reg"),
+                                   t("height"), t("vel"), filter=False)
+    boxes = preds[0]["bboxes"].detach().cpu().numpy()
+    scores = preds[0]["scores"].detach().cpu().numpy()
+    labels = preds[0]["labels"].detach().cpu().numpy()
+    mask = scores > 0.12
+    dump("boxes", np.concatenate([boxes[mask], scores[mask, None], labels[mask, None]], axis=1),
+         dump_dir, sub)
+    print(f"[{sub}] {int(mask.sum())} boxes (score>0.12)")
 
 
-def _box_corners(box):
-    x, y, z, w, l, h, rot = box[:7]
-    c, s = np.cos(rot), np.sin(rot)
-    R = np.array([[c, -s], [s, c]])
-    base = np.array([[w / 2, l / 2], [w / 2, -l / 2], [-w / 2, -l / 2], [-w / 2, l / 2]])
-    base = base @ R.T + np.array([x, y])
-    corners = np.zeros((8, 3))
-    corners[:4, :2], corners[:4, 2] = base, z
-    corners[4:, :2], corners[4:, 2] = base, z + h
-    return corners
+# ---------------------------------------------------------------- bench
+def _time_cuda(fn, warmup, iters):
+    with torch.no_grad():
+        for _ in range(warmup):
+            fn()
+        torch.cuda.synchronize()
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        for _ in range(iters):
+            fn()
+        end.record()
+        torch.cuda.synchronize()
+    return start.elapsed_time(end) / iters
 
 
-def _parse_cpp_boxes(path):
-    import re
-    boxes = []
-    for line in open(path):
-        m = re.search(
-            r"id=(\d+) score=([-\d.]+) pos=\(([-\d.]+),([-\d.]+),([-\d.]+)\) "
-            r"size=\(([-\d.]+),([-\d.]+),([-\d.]+)\) rot=([-\d.]+)", line)
-        if m:
-            g = m.groups()
-            boxes.append([float(g[2]), float(g[3]), float(g[4]),
-                          float(g[5]), float(g[6]), float(g[7]),
-                          float(g[8]), float(g[1]), float(g[0])])
-    return np.array(boxes, dtype=np.float32)
+def bench_torch(model, dump_dir, iters, warmup):
+    """4 个部署模块的 fp32 延时（ms）。"""
+    tensors = {k: torch.from_numpy(load_dump(k, dump_dir, "torch")).cuda()
+               for k in ("img", "depth", "bev360", "cam_bev", "lidar_bev", "middle")}
+    cam = CamBackboneBf(model)
+    down = DownsampleBf(model)
+    fuser = FuserDecoder(model)
+    head = HeadBboxBf(model)
+    calls = {
+        "camera.backbone": lambda: cam(tensors["img"], tensors["depth"]),
+        "camera.vtransform": lambda: down(tensors["bev360"]),
+        "fuser": lambda: fuser(tensors["cam_bev"], tensors["lidar_bev"]),
+        "head.bbox": lambda: head(tensors["middle"]),
+    }
+    return {g: _time_cuda(calls[g], warmup, iters) for g in GRAPHS}
+
+
+def bench_onnx(onnx_dir, dump_dir, iters, warmup):
+    import onnxruntime as ort
+
+    result = {}
+    for graph in GRAPHS:
+        path = osp.join(onnx_dir, graph + ".onnx")
+        if not osp.exists(path):
+            continue
+        sess = ort.InferenceSession(path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+        feed = {k: np.ascontiguousarray(load_dump(v, dump_dir).astype(np.float32))
+                for k, v in FEEDS[graph].items()}
+        for _ in range(warmup):
+            sess.run(None, feed)
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        for _ in range(iters):
+            sess.run(None, feed)
+        torch.cuda.synchronize()
+        result[graph] = (time.perf_counter() - t0) * 1000.0 / iters
+    return result
+
+
+def bench_trt(engine_dir, dump_dir, iters, warmup, head_plan=None):
+    stream = torch.cuda.current_stream().cuda_stream
+    result = {}
+    for graph in GRAPHS:
+        path = _trt_plan_path(engine_dir, graph, head_plan)
+        if not osp.exists(path):
+            continue
+        ctx, in_names, out_names = _trt_session(engine_dir, path)
+        _bind_trt(ctx, in_names, out_names, graph, dump_dir)
+        run = lambda: ctx.execute_async_v3(stream)
+        for _ in range(warmup):
+            run()
+        torch.cuda.synchronize()
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        for _ in range(iters):
+            run()
+        end.record()
+        torch.cuda.synchronize()
+        result[graph] = start.elapsed_time(end) / iters
+    return result
+
+
+def backend_bench(args, model):
+    """torch/onnx/trt 逐模块延时，写 benchmark.json 并打印表格。"""
+    data = {"iters": args.bench_iters, "warmup": args.bench_warmup, "graphs": GRAPHS,
+            "backends": {}}
+    data["backends"]["torch"] = bench_torch(model, args.dump_dir, args.bench_iters, args.bench_warmup)
+    data["backends"]["onnx"] = bench_onnx(args.onnx_dir, args.dump_dir,
+                                          args.bench_iters, args.bench_warmup)
+    data["backends"]["trt"] = bench_trt(args.engine_dir, args.dump_dir,
+                                        args.bench_iters, args.bench_warmup, args.head_plan)
+    data["e2e"] = {k: sum(v.values()) for k, v in data["backends"].items() if v}
+
+    with open(osp.join(args.dump_dir, "benchmark.json"), "w") as f:
+        json.dump(data, f, indent=2)
+
+    print(f"\n[bench] ms (iters={data['iters']}, warmup={data['warmup']})")
+    print(f"{'module':<18}{'torch':>10}{'onnx':>10}{'trt':>10}")
+    for g in GRAPHS:
+        row = [data["backends"][b].get(g) for b in ("torch", "onnx", "trt")]
+        print(f"{g:<18}" + "".join(f"{v:>10.2f}" if v else f"{'-':>10}" for v in row))
+    print(f"{'end2end':<18}" + "".join(
+        f"{data['e2e'].get(b, 0):>10.2f}" for b in ("torch", "onnx", "trt")))
+    return data
+
+
+# ---------------------------------------------------------------- acc / vis
+def _stage_stats(dump_dir, backend, ref="torch"):
+    """每个部署阶段 vs torch 的 max/mean abs 误差条。"""
+    stats = {}
+    for stage, names in STAGE_TENSORS.items():
+        max_abs = 0.0
+        total, count = 0.0, 0
+        for name in names:
+            pa, pb = osp.join(dump_dir, ref, name + ".npy"), osp.join(dump_dir, backend, name + ".npy")
+            if not (osp.exists(pa) and osp.exists(pb)):
+                continue
+            a = np.load(pa).astype(np.float32)
+            b = np.load(pb).astype(np.float32)
+            if a.shape != b.shape:
+                continue
+            d = np.abs(a - b)
+            max_abs = max(max_abs, float(d.max()))
+            total += float(d.sum())
+            count += d.size
+        if count:
+            stats[stage] = {"max_abs": max_abs, "mean_abs": total / count}
+    return stats
+
+
+def backend_diff(dump_dir):
+    """打印精度对比表（逐张量）。"""
+    tensors = ["camera_feature", "camera_depth_weights", "cam_bev", "middle",
+               "score", "rot", "dim", "reg", "height", "vel"]
+    for ref, cur, title in [("torch", "onnx", "torch vs onnx"), ("torch", "trt", "torch vs trt")]:
+        print(f"== {title} ==")
+        for t in tensors:
+            pa, pb = osp.join(dump_dir, ref, t + ".npy"), osp.join(dump_dir, cur, t + ".npy")
+            if not (osp.exists(pa) and osp.exists(pb)):
+                continue
+            a, b = np.load(pa).astype(np.float32), np.load(pb).astype(np.float32)
+            if a.shape != b.shape:
+                print(f"  {t}: shape {a.shape} vs {b.shape} MISMATCH")
+                continue
+            d = np.abs(a - b)
+            print(f"  {t}: max_abs={d.max():.4g} mean_abs={d.mean():.4g}")
+
+
+def _box_stats(dump_dir):
+    """各后端检测框数量 + 到 torch 最近框距离（score>=0.12）。"""
+    def load(sub):
+        path = osp.join(dump_dir, sub, "boxes.npy")
+        if not osp.exists(path):
+            return None
+        b = np.load(path)
+        if b.shape[1] >= 11:
+            return b[:, :3], b[:, 9]
+        return b[:, :3], np.load(osp.join(dump_dir, sub, "scores.npy"))
+
+    ref = load("torch")
+    if ref is None:
+        return {}
+    rp, rs = ref
+    rp = rp[rs > 0.12]
+    out = {"torch": {"count": int(len(rp))}}
+    for sub in ("onnx", "trt"):
+        cur = load(sub)
+        if cur is None:
+            continue
+        p, s = cur
+        p = p[s > 0.12]
+        if len(p) == 0 or len(rp) == 0:
+            out[sub] = {"count": int(len(p))}
+            continue
+        d = np.linalg.norm(p[:, None, :] - rp[None, :, :], axis=2).min(axis=1)
+        out[sub] = {"count": int(len(p)), "mean_m": float(d.mean()), "max_m": float(d.max())}
+    return out
+
+
+def _visible(boxes, thr=0.12):
+    """boxes.npy 第 9 列为 score 时按阈值过滤，避免画出全部 query。"""
+    return boxes[boxes[:, 9] >= thr] if boxes.shape[1] >= 11 else boxes
 
 
 def _plot_vis(out, dump_dir, data_dir, subs, extra_sets=()):
+    import cv2
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import cv2
 
-    sets = list(extra_sets)
+    sets = [(arr, color, label) for arr, color, label in extra_sets]
     for sub, color, label in subs:
-        p = os.path.join(dump_dir, sub, "boxes.npy")
-        if os.path.exists(p):
-            sets.append((np.load(p), color, label))
+        path = osp.join(dump_dir, sub, "boxes.npy")
+        if osp.exists(path):
+            sets.append((_visible(np.load(path)), color, label))
 
-    l2i = load_tensor(os.path.join(data_dir, "lidar2image.tensor"))
-    pts = load_tensor(os.path.join(data_dir, "points.tensor"))
+    l2i = load_tensor(osp.join(data_dir, "lidar2image.tensor"))
+    pts = load_tensor(osp.join(data_dir, "points.tensor"))
 
     fig, axes = plt.subplots(3, 3, figsize=(26, 15))
     ax = axes[0][0]
     if pts.ndim >= 2 and pts.shape[1] >= 3:
         sel = pts[::5, :3]
         ax.scatter(sel[:, 0], -sel[:, 1], s=0.3, c="lightgray", alpha=0.4)
-    for arr, color, label in sets:
+    for arr, color, _ in sets:
         for b in arr:
-            x, y, z, w, l, h, rot = b[:7]
+            x, y, _, w, l, _, rot = b[:7]
             c, s = np.cos(rot), np.sin(rot)
-            R = np.array([[c, -s], [s, c]])
             rect = np.array([[-w / 2, -l / 2], [w / 2, -l / 2], [w / 2, l / 2],
-                             [-w / 2, l / 2], [-w / 2, -l / 2]]) @ R.T
+                             [-w / 2, l / 2], [-w / 2, -l / 2]]) @ np.array([[c, -s], [s, c]]).T
             rect += np.array([x, y])
             ax.plot(rect[:, 0], -rect[:, 1], color=color, lw=1.2)
-    ax.set_xlim(-54, 54); ax.set_ylim(-54, 54); ax.set_aspect("equal")
+    ax.set_xlim(-54, 54)
+    ax.set_ylim(-54, 54)
+    ax.set_aspect("equal")
     ax.set_title("BEV " + " / ".join(f"{label}({color})" for _, color, label in sets))
     ax.grid(True, alpha=0.3)
 
     cam_axes = [axes[0][1], axes[0][2], axes[1][0], axes[1][1], axes[1][2], axes[2][0]]
     for c, axc in enumerate(cam_axes):
-        img = cv2.imread(os.path.join(data_dir, f"{c}-{CAM_NAMES[c]}.jpg"))
+        img = cv2.imread(osp.join(data_dir, f"{c}-{CAM_NAMES[c]}.jpg"))
         if img is None:
             continue
-        img = img[:, :, ::-1]
-        axc.imshow(img)
-        for arr, color, label in sets:
+        height, width = img.shape[:2]
+        axc.imshow(img[:, :, ::-1])
+        for arr, color, _ in sets:
             for b in arr:
-                cor = _box_corners(b)
-                h = np.concatenate([cor, np.ones((8, 1))], axis=1)
-                uv = h @ l2i[c].T
-                u = uv[:, 0] / uv[:, 2]; v = uv[:, 1] / uv[:, 2]
-                edges = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6),
-                         (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]
-                for e in edges:
-                    axc.plot([u[e[0]], u[e[1]]], [v[e[0]], v[e[1]]], color=color, lw=1)
-        axc.set_title(CAM_NAMES[c]); axc.axis("off")
+                x, y, z, w, l, h, rot = b[:7]
+                cc, ss = np.cos(rot), np.sin(rot)
+                base = np.array([[w / 2, l / 2], [w / 2, -l / 2],
+                                 [-w / 2, -l / 2], [-w / 2, l / 2]]) @ np.array([[cc, -ss], [ss, cc]]).T
+                base += np.array([x, y])
+                corners = np.concatenate([np.c_[base, np.full(4, z)],
+                                          np.c_[base, np.full(4, z + h)]], axis=0)
+                uv = np.c_[corners, np.ones(8)] @ l2i[c].T
+                if np.any(uv[:, 2] <= 0.1):  # 在相机后方，跳过
+                    continue
+                u, v = uv[:, 0] / uv[:, 2], uv[:, 1] / uv[:, 2]
+                for i, j in [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6),
+                             (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]:
+                    axc.plot([u[i], u[j]], [v[i], v[j]], color=color, lw=1)
+        axc.set_xlim(0, width)
+        axc.set_ylim(height, 0)
+        axc.set_title(CAM_NAMES[c])
+        axc.axis("off")
 
     axes[2][1].axis("off")
     axl = axes[2][2]
@@ -500,112 +530,197 @@ def _plot_vis(out, dump_dir, data_dir, subs, extra_sets=()):
     axl.legend(loc="center", fontsize=14)
 
     plt.savefig(out, dpi=100, bbox_inches="tight")
-    print(f"[vis] saved {out}")
+    print(f"[vis] {out}")
 
 
 def backend_vis(dump_dir, data_dir, cpp_boxes_txt=None):
     cpp_sets = ()
-    if cpp_boxes_txt and os.path.exists(cpp_boxes_txt):
-        cpp_sets = ((_parse_cpp_boxes(cpp_boxes_txt), "blue", "cpp"),)
+    if cpp_boxes_txt and osp.exists(cpp_boxes_txt):
+        cpp_sets = ((parse_cpp_boxes(cpp_boxes_txt), "blue", "cpp"),)
     for sub, extra in [("onnx", ()), ("trt", cpp_sets)]:
         subs = [("torch", "limegreen", "torch"), (sub, "red", sub)]
-        _plot_vis(os.path.join(dump_dir, f"{sub}_vis.jpg"), dump_dir, data_dir, subs, extra)
+        _plot_vis(osp.join(dump_dir, f"{sub}_vis.jpg"), dump_dir, data_dir, subs, extra)
 
 
-# ---------------------------------------------------------------- diff
-def _load_bf_tensor(p):
-    """读 C++ BEVFUSION_DUMP_DIR 落盘的 .tensor（export_example_data 同格式）。"""
-    with open(p, "rb") as f:
-        h = np.fromfile(f, dtype="<i4", count=3)
-        dims = tuple(np.fromfile(f, dtype="<i4", count=h[1]))
-        dt = {2: np.float16, 3: np.float32}.get(h[2], np.float32)
-        return np.fromfile(f, dtype=dt).reshape(dims)
+# ---------------------------------------------------------------- report
+SURFACE = "#fcfcfb"
+INK = "#0b0b0b"
+INK2 = "#52514e"
+GRID = "#e6e5e1"
+COLORS = {"torch": "#2a78d6", "onnx": "#eb6834", "trt": "#1baf7a"}
 
 
-def backend_cpp(dump_dir, cpp_dir):
-    print("== torch vs trt（C++ 全链：TRT 引擎 + libspconv SCN / voxelize）==")
-    for t in ["lidar_bev", "cam_bev", "middle"]:
-        try:
-            a = load_dump(t, dump_dir, "torch")
-            b = _load_bf_tensor(os.path.join(cpp_dir, f"trt_{t}"))
-            print(_stats(a, b, t))
-        except FileNotFoundError:
-            print(f"  {t}: trt 全链 dump 缺失（先设 BEVFUSION_DUMP_DIR 跑 C++）")
+def _style(ax):
+    ax.set_facecolor(SURFACE)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color("#d5d4cf")
+    ax.tick_params(colors=INK2, labelsize=9)
+    ax.grid(axis="x", color=GRID, lw=0.8)
+    ax.set_axisbelow(True)
 
 
-def _stats(a, b, name):
-    a, b = np.asarray(a, np.float32), np.asarray(b, np.float32)
-    if a.shape != b.shape:
-        return f"  {name}: shape {a.shape} vs {b.shape} MISMATCH"
-    diff = np.abs(a - b)
-    rel = diff / (np.abs(a) + 1e-6)
-    return ("  %s: max_abs=%.6g mean_abs=%.6g max_rel=%.6g"
-            % (name, diff.max(), diff.mean(), rel.max()))
+def backend_report(dump_dir):
+    """延时 + 精度对比图 -> report.png。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    bench = None
+    path = osp.join(dump_dir, "benchmark.json")
+    if osp.exists(path):
+        bench = json.load(open(path))
+    acc = {sub: _stage_stats(dump_dir, sub) for sub in ("onnx", "trt")}
+    boxes = _box_stats(dump_dir)
+
+    fig = plt.figure(figsize=(13, 9), facecolor=SURFACE, constrained_layout=True)
+    gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 0.10])
+    fig.suptitle("BEVFusion deployment parity: latency and accuracy",
+                 color=INK, fontsize=13, x=0.01, ha="left")
+
+    # 1. per-module latency
+    ax = fig.add_subplot(gs[0, 0])
+    _style(ax)
+    if bench:
+        backends = ["torch", "onnx", "trt"]
+        y = np.arange(len(GRAPHS))
+        h = 0.26
+        for i, b in enumerate(backends):
+            vals = [bench["backends"].get(b, {}).get(g, 0) for g in GRAPHS]
+            ax.barh(y + (i - 1) * h, vals, height=h * 0.92,
+                    color=COLORS[b], label=b, zorder=3)
+        ax.set_yticks(y, GRAPHS, color=INK, fontsize=9)
+        ax.invert_yaxis()
+        ax.set_xlabel("latency (ms)", color=INK2, fontsize=9)
+        ax.legend(frameon=False, fontsize=8.5, loc="lower right")
+        ax.set_title("Per-module latency", color=INK, fontsize=11, loc="left")
+    else:
+        ax.text(0.5, 0.5, "benchmark.json missing\n(run --backend bench)",
+                ha="center", va="center", color=INK2, transform=ax.transAxes)
+        ax.set_axis_off()
+
+    # 2. end-to-end latency
+    ax = fig.add_subplot(gs[0, 1])
+    _style(ax)
+    ax.grid(axis="x", visible=False)
+    ax.grid(axis="y", color=GRID, lw=0.8)
+    if bench:
+        backends = ["torch", "onnx", "trt"]
+        vals = [bench["e2e"].get(b, 0) for b in backends]
+        bars = ax.bar(backends, vals, color=[COLORS[b] for b in backends],
+                      width=0.55, zorder=3)
+        for bar, v in zip(bars, vals):
+            ax.text(bar.get_x() + bar.get_width() / 2, v, f"{v:.1f} ms",
+                    ha="center", va="bottom", color=INK, fontsize=9)
+        ax.set_ylim(0, max(vals) * 1.25)
+        ax.set_ylabel("latency (ms)", color=INK2, fontsize=9)
+        ax.set_title("End-to-end (4 modules, 1 frame)", color=INK, fontsize=11, loc="left")
+        ax.text(0.0, -0.22, f"iters={bench['iters']}, warmup={bench['warmup']}; "
+                            "torch/onnx fp32, trt fp16",
+                transform=ax.transAxes, color=INK2, fontsize=8)
+    else:
+        ax.set_axis_off()
+
+    # 3/4. accuracy vs torch
+    for idx, metric in enumerate(("mean_abs", "max_abs")):
+        ax = fig.add_subplot(gs[1, idx])
+        _style(ax)
+        stages = list(STAGE_TENSORS)
+        y = np.arange(len(stages))
+        h = 0.34
+        for i, sub in enumerate(("onnx", "trt")):
+            vals = [max(acc[sub].get(s, {}).get(metric, 0), 1e-9) for s in stages]
+            ax.barh(y + (i - 0.5) * h, vals, height=h * 0.92,
+                    color=COLORS[sub], label=sub, zorder=3)
+        ax.set_xscale("log")
+        ax.set_yticks(y, stages, color=INK, fontsize=9)
+        ax.invert_yaxis()
+        ax.set_xlabel(f"{metric.replace('_', ' ')} (log)", color=INK2, fontsize=9)
+        ax.legend(frameon=False, fontsize=8.5, loc="upper right")
+        ax.set_title(("Mean absolute error vs torch" if metric == "mean_abs"
+                      else "Max absolute error vs torch"),
+                     color=INK, fontsize=11, loc="left")
+
+    # footer: boxes + dumps
+    axf = fig.add_subplot(gs[2, :])
+    axf.axis("off")
+    lines = []
+    if boxes:
+        parts = []
+        for sub in ("torch", "onnx", "trt"):
+            if sub in boxes:
+                b = boxes[sub]
+                extra = f", mean nn {b['mean_m'] * 100:.1f}cm" if "mean_m" in b else ""
+                parts.append(f"{sub} {b['count']}{extra}")
+        lines.append("boxes (score>=0.12): " + " | ".join(parts))
+    lines.append(f"dump: {dump_dir}")
+    axf.text(0.0, 0.5, "    ".join(lines), color=INK2, fontsize=8,
+             va="center", transform=axf.transAxes)
+
+    out = osp.join(dump_dir, "report.png")
+    fig.savefig(out, dpi=140, facecolor=SURFACE)
+    plt.close(fig)
+    print(f"[report] {out}")
 
 
-def backend_diff(dump_dir):
-    tensors = ["lidar_bev", "camera_feature", "camera_depth_weights", "cam_bev",
-               "middle", "score", "rot", "dim", "reg", "height", "vel"]
-    pairs = [
-        ("torch", "onnx", "torch vs onnx（onnx 转换损失）"),
-        ("torch", "trt", "torch vs trt（总部署损失）"),
-        ("onnx", "trt", "onnx vs trt（TRT 构建/执行损失）"),
-    ]
-    for a, b, title in pairs:
-        if not all(osp.isdir(osp.join(dump_dir, s)) and
-                   any(f.endswith(".npy") for f in os.listdir(osp.join(dump_dir, s))) for s in (a, b)):
-            continue  # 只对比实际存在的 dump 目录，跳过缺失后端
-        print(f"== {title} ==")
-        for t in tensors:
-            pa, pb = osp.join(dump_dir, a, t + ".npy"), osp.join(dump_dir, b, t + ".npy")
-            if not (osp.exists(pa) and osp.exists(pb)):
-                continue  # 单张量缺失直接跳过，不打印噪音
-            print(_stats(np.load(pa), np.load(pb), t))
-
-
+# ---------------------------------------------------------------- main
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("config", nargs="?")
     ap.add_argument("ckpt", nargs="?")
-    ap.add_argument("--backend", default="all", choices=["torch", "onnx", "trt", "diff", "trt-full", "vis", "all"])
+    ap.add_argument("--backend", default="all",
+                    choices=["torch", "onnx", "trt", "bench", "diff",
+                             "trt-full", "vis", "report", "all"])
     ap.add_argument("--onnx-dir", default="outputs/onnx")
     ap.add_argument("--engine-dir", default="deploy/model/resnet50/build")
     ap.add_argument("--dump-dir", default="outputs/model_diff")
     ap.add_argument("--sample-index", type=int, default=0)
     ap.add_argument("--data-dir", default="outputs/example-data")
-    ap.add_argument("--cpp-boxes", default=None,
-                    help="C++ 打印的 bboxes 文本文件（vis 叠加第三色）")
-    ap.add_argument("--head-plan", default=None,
-                    help="head.bbox plan 文件名（如 head.bbox.fp32.plan；默认 layernormplugin.plan 优先）")
-    ap.add_argument("--cpp-dir", default="outputs/model_diff/cpp",
-                    help="trt 全链 dump 落盘目录（--backend trt-full；C++ BEVFUSION_DUMP_DIR）")
+    ap.add_argument("--cpp-boxes", default=None)
+    ap.add_argument("--head-plan", default=None)
+    ap.add_argument("--cpp-dir", default="outputs/model_diff/cpp")
+    ap.add_argument("--bench-iters", type=int, default=20)
+    ap.add_argument("--bench-warmup", type=int, default=5)
     args = ap.parse_args()
 
     model = None
+    need_model = args.backend in ("torch", "onnx", "trt", "bench", "all")
+    if need_model:
+        assert args.config and args.ckpt, f"{args.backend} 需要 config + ckpt"
     if args.backend in ("torch", "all"):
-        assert args.config and args.ckpt, "torch 后端需要 config + ckpt"
-        model = backend_torch(args.config, args.ckpt, args.dump_dir, args.sample_index, args.cpp_dir)
-    elif args.backend in ("onnx", "trt"):
-        assert args.config and args.ckpt, f"{args.backend} 后端 decode 需要 config + ckpt"
+        model = backend_torch(args.config, args.ckpt, args.dump_dir,
+                              args.sample_index, args.cpp_dir)
+    elif need_model:
         model = load_model_only(args.config, args.ckpt)
+
     if args.backend in ("onnx", "all"):
         backend_onnx(args.onnx_dir, args.dump_dir, model)
     if args.backend in ("trt", "all"):
         backend_trt(args.engine_dir, args.dump_dir, model, args.head_plan)
+    if args.backend in ("bench", "all"):
+        backend_bench(args, model)
     if args.backend in ("diff", "all"):
         backend_diff(args.dump_dir)
     if args.backend in ("trt-full", "all"):
-        backend_cpp(args.dump_dir, args.cpp_dir)
+        _diff_cpp(args.dump_dir, args.cpp_dir)
     if args.backend in ("vis", "all"):
-        if model is None and args.backend == "vis":
-            assert args.config and args.ckpt, "vis 需要 model（config + ckpt）"
-            from scripts.config import load_config
-            from models import build_model
-            from scripts.trainer import load_model_checkpoint
-            cfg = load_config(args.config)
-            model = build_model(cfg.model).cuda().eval()
-            load_model_checkpoint(model, args.ckpt, strict=True)
         backend_vis(args.dump_dir, args.data_dir, args.cpp_boxes)
+    if args.backend in ("report", "all"):
+        backend_report(args.dump_dir)
+
+
+def _diff_cpp(dump_dir, cpp_dir):
+    print("== torch vs C++ 全链 ==")
+    for t in ["lidar_bev", "cam_bev", "middle"]:
+        try:
+            a = load_dump(t, dump_dir, "torch").astype(np.float32)
+            b = load_tensor(osp.join(cpp_dir, f"trt_{t}")).astype(np.float32)
+            d = np.abs(a - b)
+            print(f"  {t}: max_abs={d.max():.4g} mean_abs={d.mean():.4g}")
+        except FileNotFoundError:
+            print(f"  {t}: C++ dump missing (BEVFUSION_DUMP_DIR)")
 
 
 if __name__ == "__main__":
