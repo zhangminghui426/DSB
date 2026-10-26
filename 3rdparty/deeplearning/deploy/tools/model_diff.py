@@ -465,29 +465,23 @@ def _stats(a, b, name):
 
 
 def backend_diff(dump_dir):
-    tensors = ["camera_feature", "camera_depth_weights", "cam_bev",
+    tensors = ["lidar_bev", "camera_feature", "camera_depth_weights", "cam_bev",
                "middle", "score", "rot", "dim", "reg", "height", "vel"]
-    print("== torch vs onnx（onnx 转换损失）==")
-    for t in tensors:
-        try:
-            a = load_dump(t, dump_dir, "torch"); b = load_dump(t, dump_dir, "onnx")
-            print(_stats(a, b, t))
-        except FileNotFoundError:
-            print(f"  {t}: onnx dump 缺失")
-    print("== torch vs trt（总部署损失）==")
-    for t in tensors:
-        try:
-            a = load_dump(t, dump_dir, "torch"); b = load_dump(t, dump_dir, "trt")
-            print(_stats(a, b, t))
-        except FileNotFoundError:
-            print(f"  {t}: trt dump 缺失")
-    print("== onnx vs trt（TRT 构建/执行损失）==")
-    for t in tensors:
-        try:
-            a = load_dump(t, dump_dir, "onnx"); b = load_dump(t, dump_dir, "trt")
-            print(_stats(a, b, t))
-        except FileNotFoundError:
-            print(f"  {t}: onnx/trt dump 缺失")
+    pairs = [
+        ("torch", "onnx", "torch vs onnx（onnx 转换损失）"),
+        ("torch", "trt", "torch vs trt（总部署损失）"),
+        ("onnx", "trt", "onnx vs trt（TRT 构建/执行损失）"),
+    ]
+    for a, b, title in pairs:
+        if not all(osp.isdir(osp.join(dump_dir, s)) and
+                   any(f.endswith(".npy") for f in os.listdir(osp.join(dump_dir, s))) for s in (a, b)):
+            continue  # 只对比实际存在的 dump 目录，跳过缺失后端
+        print(f"== {title} ==")
+        for t in tensors:
+            pa, pb = osp.join(dump_dir, a, t + ".npy"), osp.join(dump_dir, b, t + ".npy")
+            if not (osp.exists(pa) and osp.exists(pb)):
+                continue  # 单张量缺失直接跳过，不打印噪音
+            print(_stats(np.load(pa), np.load(pb), t))
 
 
 def main():

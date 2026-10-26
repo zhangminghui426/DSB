@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# usage: deploy/launch/export.sh <det|seg> [checkpoint] [extra args...]
+# usage: deploy/export.sh <det|seg> [checkpoint] [extra args...]
 # Python 与 C++ 推理共用的前置导出：4 张分模块图 -> ONNX -> TRT engine
 # （trtexec CLI）一步完成。C++ 侧输入文件另用 deploy/tools/export_cpp_input.py。
 # 可选 --onnx-only（只导出 ONNX）。Runs with the model repo as CWD so
 # configs/ ckpts/ outputs/ relative paths keep working.
 set -e
-HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deeplearning/deploy/launch
+HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deeplearning/deploy
 DL="$(cd "$HERE/../.." && pwd)"                  # 3rdparty/deeplearning（模型库根）
 cd "$DL"
 source "$HERE/env.sh"
