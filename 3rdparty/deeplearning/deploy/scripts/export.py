@@ -244,7 +244,9 @@ def _sample_inputs(cfg, model):
             "camera2lidar": eye4.repeat(1, 6, 1, 1),
             "camera_intrinsics": eye4.repeat(1, 6, 1, 1),
             "img_aug_matrix": eye4.repeat(1, 6, 1, 1),
-            "lidar_aug_matrix": eye4.repeat(1, 6, 1, 1),
+            # lidar_aug_matrix 无 N 维：get_geometry 的 extra_rots/extra_trans
+            # view(B,1,...,3,3)/view(B,1,...,3) 后 repeat(N)，期望 (B,4,4)
+            "lidar_aug_matrix": eye4[0],
         }
         lidar_bev = torch.randn(1, 256, 180, 180, device=dev, dtype=dt)
         # bev_pool 输出（DownsampleBf 输入，360x360）
