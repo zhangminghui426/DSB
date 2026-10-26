@@ -12,10 +12,9 @@ DSB/
 │   ├── deeplearning/        # 深度学习模型库
 │   │   ├── models/          # BEVFusion/FlashOCC 模型 + SECOND 标定板检测器
 │   │   ├── datasets/ scripts/ configs/ ops/ tools/ tests/ launch/
-│   │   └── deploy/          # TRT 推理部署（C++）
-│   │       ├── scripts/     # export.py：分模块 ONNX 导出（5 张图）
+│   │   └── deploy/          # TRT 推理部署（torch/onnx/trt 三阶段）
+│   │       ├── tool/        # torch_stage.py（输入）/ onnx_stage.py（导出）/ trt_stage.sh（运行）/ 对拍与可视化
 │   │       ├── src/         # C++ 推理（CUDA-BEVFusion 移植）
-│   │       ├── tool/        # example-data 导出、三端对拍、环境脚本
 │   │       └── model/       # ONNX / TRT engine（生成产物）
 │   └── fast_calib/          # 雷达-相机外参标定
 ├── packet/                  # Docker 安装包（CUDA/cuDNN/TensorRT）
@@ -56,18 +55,18 @@ python scripts/train.py configs/det_convfuser.py --load_from ckpts/bevfusion-det
 python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eval bbox
 
 # 1) 导出分模块 ONNX（5 张图，含 SCN；--verify 用 onnxruntime 逐图校验）
-python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --verify
+python deploy/tool/onnx_stage.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --verify
 
 # 2) 拷贝 ONNX 到 deploy/model/resnet50/ 并构建 TRT engine
 #    （head.bbox 自动用 fp32 层构建为 head.bbox.fp32.plan）
 DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 
 # 3) 生成 C++ 输入（6 相机 jpg + 矩阵/点云 tensor）
-python deploy/tool/export_example_data.py configs/det_convfuser.py \
+python deploy/tool/torch_stage.py configs/det_convfuser.py \
     ckpts/bevfusion-det-bf.pth --sample-index 0
 
 # 4) C++ 推理（输出解码框 + build/cuda-bevfusion.jpg）
-cd deploy && bash tool/run.sh
+cd deploy && bash tool/trt_stage.sh
 ```
 
 ```bash

@@ -33,7 +33,7 @@ for path in (_DL_ROOT, _HERE):
         sys.path.insert(0, path)
 
 from common import load_tensor, parse_cpp_boxes, save_tensor  # noqa: E402
-from deploy.scripts.export import (  # noqa: E402
+from deploy.tool.onnx_stage import (  # noqa: E402
     CamBackboneBf, CamVtransformDet, DownsampleBf, FuserDecoder, HeadBboxBf)
 
 # 4 个可部署图的输入/输出 dump 名（与 export.py 的 BF_IO 对应）
@@ -503,13 +503,13 @@ def _plot_vis(out, dump_dir, data_dir, subs, extra_sets=()):
         axc.imshow(img[:, :, ::-1])
         for arr, color, _ in sets:
             for b in arr:
-                x, y, z, w, l, h, rot = b[:7]
+                x, y, z, w, l, h, rot = b[:7]  # z 为框中心（nuScenes/预测同约定）
                 cc, ss = np.cos(rot), np.sin(rot)
                 base = np.array([[w / 2, l / 2], [w / 2, -l / 2],
                                  [-w / 2, -l / 2], [-w / 2, l / 2]]) @ np.array([[cc, -ss], [ss, cc]]).T
                 base += np.array([x, y])
-                corners = np.concatenate([np.c_[base, np.full(4, z)],
-                                          np.c_[base, np.full(4, z + h)]], axis=0)
+                corners = np.concatenate([np.c_[base, np.full(4, z - h / 2)],
+                                          np.c_[base, np.full(4, z + h / 2)]], axis=0)
                 uv = np.c_[corners, np.ones(8)] @ l2i[c].T
                 if np.any(uv[:, 2] <= 0.1):  # 在相机后方，跳过
                     continue

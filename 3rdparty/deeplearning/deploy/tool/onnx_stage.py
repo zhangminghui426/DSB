@@ -1,7 +1,7 @@
-"""BEVFusion det 分模块 ONNX 导出（5 张图）。
+"""onnx 阶段：BEVFusion det 分模块 ONNX 导出（5 张图）。
 
 用法（3rdparty/deeplearning 下）：
-  python deploy/scripts/export.py CONFIG CHECKPOINT [--outdir outputs/onnx] [--verify]
+  python deploy/tool/onnx_stage.py CONFIG CHECKPOINT [--outdir outputs/onnx] [--verify]
   构建 engine：DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 
 图：camera.backbone / camera.vtransform / fuser / head.bbox /

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # usage: deploy/export.sh <det|seg> [checkpoint] [extra args...]
-# Python 与 C++ 推理共用的前置导出：5 张分模块图 -> ONNX（含 SCN）。
-# TRT engine 另用 deploy/build_trt_engine.sh 构建。C++ 侧输入文件用
-# deploy/tool/export_example_data.py 生成。Runs with the model repo as CWD
-# so configs/ ckpts/ outputs/ relative paths keep working.
+# onnx 阶段导出：5 张分模块图 -> ONNX（含 SCN）。
+# TRT engine 用 deploy/build_trt_engine.sh；推理输入用 deploy/tool/torch_stage.py。
+# Runs with the model repo as CWD so relative paths keep working.
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"            # 3rdparty/deeplearning/deploy
 DL="$(cd "$HERE/.." && pwd)"                     # 3rdparty/deeplearning（模型库根）
@@ -17,4 +16,4 @@ case "$TASK" in
 esac
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then CKPT="$1"; shift; fi
 [ -f "$CKPT" ] || { echo "checkpoint missing: $CKPT" >&2; exit 2; }
-"$PY" "$DL/deploy/scripts/export.py" "$CFG" "$CKPT" "$@"
+"$PY" "$DL/deploy/tool/onnx_stage.py" "$CFG" "$CKPT" "$@"

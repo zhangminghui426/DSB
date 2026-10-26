@@ -73,15 +73,15 @@ C++ 推理与三端对拍。
 ```bash
 # 以下命令在 3rdparty/deeplearning 下运行：
 # 1. 分模块 ONNX 导出（5 张图，含 SCN）
-python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --verify
+python deploy/tool/onnx_stage.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --verify
 
 # 2. 构建 TRT engine（head.bbox 自动用 fp32 层构建 head.bbox.fp32.plan）
 DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 
 # 3. 生成 C++ 输入并运行（输出解码框 + build/cuda-bevfusion.jpg）
-python deploy/tool/export_example_data.py configs/det_convfuser.py \
+python deploy/tool/torch_stage.py configs/det_convfuser.py \
     ckpts/bevfusion-det-bf.pth --sample-index 0
-cd deploy && bash tool/run.sh
+cd deploy && bash tool/trt_stage.sh
 ```
 
 ## 模型 I/O 约定
