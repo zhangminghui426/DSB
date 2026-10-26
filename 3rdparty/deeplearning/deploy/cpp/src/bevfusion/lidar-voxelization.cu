@@ -22,6 +22,10 @@
  */
 
 #include <cuda_fp16.h>
+#include <thrust/binary_search.h>
+#include <thrust/device_ptr.h>
+#include <thrust/sort.h>
+#include <thrust/unique.h>
 
 #include "common/check.hpp"
 #include "common/launch.cuh"
@@ -30,161 +34,77 @@
 namespace bevfusion {
 namespace lidar {
 
-static __device__ inline uint64_t hash(uint64_t k) {
-  k ^= k >> 16;
-  k *= 0x85ebca6b;
-  k ^= k >> 13;
-  k *= 0xc2b2ae35;
-  k ^= k >> 16;
-  return k;
-}
+// ---------------------------------------------------------------------------
+// 输入顺序 voxelize（与 mmcv hard_voxelize deterministic 对齐）
+//
+// 原 CUDA-BEVFusion 实现用哈希 + atomicAdd 选点：voxel 内保留"任意"前
+// max_points 个点（并发顺序不确定）。mmcv deterministic 版按**输入点序**
+// 填充每个 voxel 的前 max_points 个点。对点多（>10）的 voxel 二者点集不同，
+// 均值特征差异可达 O(1)（实测 p99=1.0 / max=24），经 SCN 放大后 lidar_bev
+// 与 torch 偏差 0.2 级（max 327），直接导致检测框错位。
+//
+// 新实现：voxel key（uint64 = z*GY*GX + y*GX + x）稳定排序 → 每 voxel 组内
+// 保持输入顺序 → 取前 max_points 个点算均值。与 torch 逐 voxel 对齐。
+// ---------------------------------------------------------------------------
 
-static __device__ inline void insert_to_hash_table(const uint32_t key, uint32_t *value, const uint32_t hash_size,
-                                                   uint32_t *hash_table) {
-  uint64_t hash_value = hash(key);
-  uint32_t slot = hash_value % (hash_size / 2) /*key, value*/;
-  uint32_t empty_key = UINT32_MAX;
-  while (true) {
-    uint32_t pre_key = atomicCAS(hash_table + slot, empty_key, key);
-    if (pre_key == empty_key) {
-      hash_table[slot + hash_size / 2 /*offset*/] = atomicAdd(value, 1);
-      break;
-    } else if (pre_key == key) {
-      break;
-    }
-    slot = (slot + 1) % (hash_size / 2);
-  }
-}
-
-static __device__ inline uint32_t lookup_hash_table(const uint32_t key, const uint32_t hash_size, const uint32_t *hash_table) {
-  uint64_t hash_value = hash(key);
-  uint32_t slot = hash_value % (hash_size / 2) /*key, value*/;
-  uint32_t empty_key = UINT32_MAX;
-  int cnt = 0;
-  while (true /* need to be adjusted according to data*/) {
-    cnt++;
-    if (hash_table[slot] == key) {
-      return hash_table[slot + hash_size / 2];
-    } else if (hash_table[slot] == empty_key) {
-      return empty_key;
-    } else {
-      slot = (slot + 1) % (hash_size / 2);
-    }
-  }
-  return empty_key;
-}
-
-static __global__ void build_hash_table_kernel(size_t points_size, const half *points, VoxelizationParameter param,
-                                               unsigned int *hash_table, unsigned int *real_voxel_num) {
-  int point_idx = cuda_linear_index;
-  if (point_idx >= points_size) return;
-
-  float px = points[param.num_feature * point_idx];
-  float py = points[param.num_feature * point_idx + 1];
-  float pz = points[param.num_feature * point_idx + 2];
-
-  int voxel_idx = floorf((px - param.min_range.x) / param.voxel_size.x);
-  if (voxel_idx < 0 || voxel_idx >= param.grid_size.x) return;
-
-  int voxel_idy = floorf((py - param.min_range.y) / param.voxel_size.y);
-  if (voxel_idy < 0 || voxel_idy >= param.grid_size.y) return;
-
-  int voxel_idz = floorf((pz - param.min_range.z) / param.voxel_size.z);
-  if (voxel_idz < 0 || voxel_idz >= param.grid_size.z) return;
-  unsigned int voxel_offset = (voxel_idz * param.grid_size.y + voxel_idy) * param.grid_size.x + voxel_idx;
-  insert_to_hash_table(voxel_offset, real_voxel_num, points_size * 2 * 2, hash_table);
-}
-
-template <CoordinateOrder order>
-static __device__ void save_result_by_order(uint4 *output, uint x, uint y, uint z);
-
-template <>
-__device__ void save_result_by_order<CoordinateOrder::XYZ>(uint4 *output, uint x, uint y, uint z) {
-  *output = make_uint4(0, x, y, z);
-}
-
-template <>
-__device__ void save_result_by_order<CoordinateOrder::ZYX>(uint4 *output, uint x, uint y, uint z) {
-  *output = make_uint4(0, z, y, x);
-}
-
-template <CoordinateOrder order>
-static __global__ void voxelization_kernel(size_t points_size, const half *points, VoxelizationParameter param,
-                                           unsigned int *hash_table, unsigned int *num_points_per_voxel, float *voxels_temp,
-                                           unsigned int *voxel_indices) {
-  int point_idx = cuda_linear_index;
-  if (point_idx >= points_size) return;
-
-  float px = points[param.num_feature * point_idx];
-  float py = points[param.num_feature * point_idx + 1];
-  float pz = points[param.num_feature * point_idx + 2];
-
+// pass1：计算 voxel key 并压缩有效点（keys/idxs 保留输入 index 顺序信息）
+__global__ void voxel_key_kernel(size_t num_points, const half* points, VoxelizationParameter param,
+                                 uint64_t* keys, int* idxs, unsigned int* valid) {
+  int i = cuda_linear_index;
+  if (i >= (int)num_points) return;
+  const half* p = points + (size_t)i * param.num_feature;
+  float px = __half2float(p[0]), py = __half2float(p[1]), pz = __half2float(p[2]);
   if (px < param.min_range.x || px >= param.max_range.x || py < param.min_range.y || py >= param.max_range.y ||
-      pz < param.min_range.z || pz >= param.max_range.z) {
+      pz < param.min_range.z || pz >= param.max_range.z)
     return;
-  }
-
-  int voxel_idx = floorf((px - param.min_range.x) / param.voxel_size.x);
-  int voxel_idy = floorf((py - param.min_range.y) / param.voxel_size.y);
-  int voxel_idz = floorf((pz - param.min_range.z) / param.voxel_size.z);
-  if ((voxel_idx < 0 || voxel_idx >= param.grid_size.x)) {
-    return;
-  }
-  if ((voxel_idy < 0 || voxel_idy >= param.grid_size.y)) {
-    return;
-  }
-  if ((voxel_idz < 0 || voxel_idz >= param.grid_size.z)) {
-    return;
-  }
-
-  unsigned int voxel_offset = (voxel_idz * param.grid_size.y + voxel_idy) * param.grid_size.x + voxel_idx;
-
-  // scatter to voxels
-  unsigned int voxel_id = lookup_hash_table(voxel_offset, points_size * 2 * 2, hash_table);
-  if (voxel_id >= param.max_voxels) {
-    return;
-  }
-
-  unsigned int current_num = atomicAdd(num_points_per_voxel + voxel_id, 1);
-  if (current_num < param.max_points_per_voxel) {
-    unsigned int dst_offset = voxel_id * (param.num_feature * param.max_points_per_voxel) + current_num * param.num_feature;
-    unsigned int src_offset = point_idx * param.num_feature;
-    for (int feature_idx = 0; feature_idx < param.num_feature; ++feature_idx) {
-      voxels_temp[dst_offset + feature_idx] = points[src_offset + feature_idx];
-    }
-
-    // now only deal with batch_size = 1
-    // since not sure what the input format will be if batch size > 1
-    save_result_by_order<order>(&((uint4 *)voxel_indices)[voxel_id], voxel_idx, voxel_idy, voxel_idz);
-  }
+  int x = (int)floorf((px - param.min_range.x) / param.voxel_size.x);
+  int y = (int)floorf((py - param.min_range.y) / param.voxel_size.y);
+  int z = (int)floorf((pz - param.min_range.z) / param.voxel_size.z);
+  if (x < 0 || x >= param.grid_size.x || y < 0 || y >= param.grid_size.y || z < 0 || z >= param.grid_size.z) return;
+  unsigned int pos = atomicAdd(valid, 1u);
+  keys[pos] = (uint64_t)z * (uint64_t)param.grid_size.y * (uint64_t)param.grid_size.x +
+              (uint64_t)y * (uint64_t)param.grid_size.x + (uint64_t)x;
+  idxs[pos] = i;
 }
 
-static __global__ void reduce_mean_kernel(size_t num_voxels, float *voxels_temp, unsigned int *num_points_per_voxel,
-                                          int max_points_per_voxel, int feature_num, half *voxel_features) {
-  int voxel_idx = cuda_linear_index;
-  if (voxel_idx >= num_voxels) return;
-
-  num_points_per_voxel[voxel_idx] =
-      num_points_per_voxel[voxel_idx] > max_points_per_voxel ? max_points_per_voxel : num_points_per_voxel[voxel_idx];
-  int valid_points_num = num_points_per_voxel[voxel_idx];
-  int offset = voxel_idx * max_points_per_voxel * feature_num;
-  for (int feature_idx = 0; feature_idx < feature_num; ++feature_idx) {
-    for (int point_idx = 0; point_idx < valid_points_num - 1; ++point_idx) {
-      voxels_temp[offset + feature_idx] += voxels_temp[offset + (point_idx + 1) * feature_num + feature_idx];
-    }
-    voxels_temp[offset + feature_idx] /= valid_points_num;
-  }
-
-  // move to be continuous
-  for (int feature_idx = 0; feature_idx < feature_num; ++feature_idx) {
-    int dst_offset = voxel_idx * feature_num;
-    int src_offset = voxel_idx * feature_num * max_points_per_voxel;
-    voxel_features[dst_offset + feature_idx] = __float2half(voxels_temp[src_offset + feature_idx]);
-  }
+// pass3：start[i] = (i==0) ? 0 : ends[i-1]
+__global__ void voxel_start_kernel(size_t num_voxels, const int* ends, int* starts) {
+  int i = cuda_linear_index;
+  if (i >= (int)num_voxels) return;
+  starts[i] = (i == 0) ? 0 : ends[i - 1];
 }
 
-nvtype::Int3 VoxelizationParameter::compute_grid_size(const nvtype::Float3 &max_range, const nvtype::Float3 &min_range,
-                                                      const nvtype::Float3 &voxel_size) {
+// pass4：每 voxel 取组内前 max_points 个点（输入顺序）算均值 + 写 indices
+__global__ void voxel_reduce_kernel(size_t num_voxels, const int* starts, const int* ends,
+                                    const uint64_t* sorted_keys, const int* sorted_idxs, const half* points,
+                                    VoxelizationParameter param, int max_points, half* voxel_features,
+                                    unsigned int* voxel_indices, int xyz_order) {
+  int v = cuda_linear_index;
+  if (v >= (int)num_voxels) return;
+  int s = starts[v], e = ends[v];
+  int n = min(e - s, max_points);
+  int64_t k = (int64_t)sorted_keys[s];
+  int z = (int)(k / ((int64_t)param.grid_size.y * param.grid_size.x));
+  int rem = (int)(k % ((int64_t)param.grid_size.y * param.grid_size.x));
+  int y = rem / param.grid_size.x, x = rem % param.grid_size.x;
+  if (xyz_order == 1) {  // XYZ（BEVFusion）
+    ((uint4*)voxel_indices)[v] = make_uint4(0, (unsigned)x, (unsigned)y, (unsigned)z);
+  } else {  // ZYX（CenterPoint）
+    ((uint4*)voxel_indices)[v] = make_uint4(0, (unsigned)z, (unsigned)y, (unsigned)x);
+  }
+  if (n <= 0) return;
+  float sum[8] = {0.0f};
+  for (int j = 0; j < n; ++j) {
+    const half* p = points + (size_t)sorted_idxs[s + j] * param.num_feature;
+    for (int f = 0; f < param.num_feature; ++f) sum[f] += __half2float(p[f]);
+  }
+  for (int f = 0; f < param.num_feature; ++f)
+    voxel_features[(size_t)v * param.num_feature + f] = __float2half(sum[f] / n);
+}
+
+nvtype::Int3 VoxelizationParameter::compute_grid_size(const nvtype::Float3& max_range,
+                                                      const nvtype::Float3& min_range,
+                                                      const nvtype::Float3& voxel_size) {
   nvtype::Int3 size;
   size.x = static_cast<int>(std::round((max_range.x - min_range.x) / voxel_size.x));
   size.y = static_cast<int>(std::round((max_range.y - min_range.y) / voxel_size.y));
@@ -195,65 +115,74 @@ nvtype::Int3 VoxelizationParameter::compute_grid_size(const nvtype::Float3 &max_
 class VoxelizationImplement : public Voxelization {
  public:
   virtual ~VoxelizationImplement() {
-    if (hash_table_) checkRuntime(cudaFree(hash_table_));
-    if (voxels_temp_) checkRuntime(cudaFree(voxels_temp_));
-
+    if (d_keys_) checkRuntime(cudaFree(d_keys_));
+    if (d_idxs_) checkRuntime(cudaFree(d_idxs_));
+    if (d_voxel_keys_) checkRuntime(cudaFree(d_voxel_keys_));
+    if (d_ends_) checkRuntime(cudaFree(d_ends_));
+    if (d_starts_) checkRuntime(cudaFree(d_starts_));
+    if (d_valid_) checkRuntime(cudaFree(d_valid_));
+    if (h_valid_) checkRuntime(cudaFreeHost(h_valid_));
     if (d_voxel_features_) checkRuntime(cudaFree(d_voxel_features_));
-    if (d_voxel_num_) checkRuntime(cudaFree(d_voxel_num_));
     if (d_voxel_indices_) checkRuntime(cudaFree(d_voxel_indices_));
-
-    if (d_real_num_voxels_) checkRuntime(cudaFree(d_real_num_voxels_));
-    if (h_real_num_voxels_) checkRuntime(cudaFreeHost(h_real_num_voxels_));
   }
 
   bool init(VoxelizationParameter param) {
     this->param_ = param;
     this->output_grid_size_ = {(int)param_.grid_size.x, (int)param_.grid_size.y, (int)param_.grid_size.z + 1};
-
-    this->hash_table_size_ = param_.max_points * 2 * 2 * sizeof(unsigned int);
-    this->voxels_temp_size_ = param_.max_voxels * param_.max_points_per_voxel * param_.num_feature * sizeof(float);
-    this->voxel_features_size_ = param_.max_voxels * param_.max_points_per_voxel * param_.num_feature * sizeof(half);
-    this->voxel_num_size_ = param_.max_voxels * sizeof(unsigned int);
-    this->voxel_idxs_size_ = param_.max_voxels * 4 * sizeof(unsigned int);
-
-    checkRuntime(cudaMalloc(&hash_table_, hash_table_size_));
-    checkRuntime(cudaMalloc(&voxels_temp_, voxels_temp_size_));
-    checkRuntime(cudaMalloc(&d_voxel_features_, voxel_features_size_));
-    checkRuntime(cudaMalloc(&d_voxel_num_, voxel_num_size_));
-    checkRuntime(cudaMalloc(&d_voxel_indices_, voxel_idxs_size_));
-    checkRuntime(cudaMalloc(&d_real_num_voxels_, sizeof(unsigned int)));
-    checkRuntime(cudaMallocHost(&h_real_num_voxels_, sizeof(unsigned int)));
+    checkRuntime(cudaMalloc(&d_keys_, (size_t)param_.max_points * sizeof(uint64_t)));
+    checkRuntime(cudaMalloc(&d_idxs_, (size_t)param_.max_points * sizeof(int)));
+    checkRuntime(cudaMalloc(&d_voxel_keys_, (size_t)param_.max_voxels * sizeof(uint64_t)));
+    checkRuntime(cudaMalloc(&d_ends_, (size_t)param_.max_voxels * sizeof(int)));
+    checkRuntime(cudaMalloc(&d_starts_, (size_t)param_.max_voxels * sizeof(int)));
+    checkRuntime(cudaMalloc(&d_valid_, sizeof(unsigned int)));
+    checkRuntime(cudaMallocHost(&h_valid_, sizeof(unsigned int)));
+    checkRuntime(cudaMalloc(&d_voxel_features_, (size_t)param_.max_voxels * param_.num_feature * sizeof(half)));
+    checkRuntime(cudaMalloc(&d_voxel_indices_, (size_t)param_.max_voxels * 4 * sizeof(unsigned int)));
     return true;
   }
 
-  // points and voxels must be of half type
-  virtual void forward(const nvtype::half *points, int num_points, void *stream, CoordinateOrder output_order) override {
-    cudaStream_t _stream = reinterpret_cast<cudaStream_t>(stream);
-    const half *_points = reinterpret_cast<const half *>(points);
-    checkRuntime(cudaMemsetAsync(hash_table_, 0xff, hash_table_size_, _stream));
-    checkRuntime(cudaMemsetAsync(voxels_temp_, 0xff, voxels_temp_size_, _stream));
-    checkRuntime(cudaMemsetAsync(d_voxel_num_, 0, voxel_num_size_, _stream));
-    checkRuntime(cudaMemsetAsync(d_real_num_voxels_, 0, sizeof(unsigned int), _stream));
-    cuda_linear_launch(build_hash_table_kernel, _stream, num_points, _points, param_, hash_table_, d_real_num_voxels_);
-    checkRuntime(cudaMemcpyAsync(h_real_num_voxels_, d_real_num_voxels_, sizeof(int), cudaMemcpyDeviceToHost, _stream));
-
-    // for difference output order
+  // points 为 half device 指针。实现内统一走默认流（排序/前缀和依赖），
+  // forward 结束前同步默认流，数据即对传入 stream 可见（SCN 引擎随后读取）。
+  virtual void forward(const nvtype::half* points, int num_points, void* stream,
+                       CoordinateOrder output_order) override {
+    const half* _points = reinterpret_cast<const half*>(points);
     if (output_order == CoordinateOrder::XYZ) {
-      cuda_linear_launch(voxelization_kernel<CoordinateOrder::XYZ>, _stream, num_points, _points, param_, hash_table_,
-                         d_voxel_num_, voxels_temp_, d_voxel_indices_);
       this->output_grid_size_ = {(int)param_.grid_size.x, (int)param_.grid_size.y, (int)param_.grid_size.z + 1};
     } else if (output_order == CoordinateOrder::ZYX) {
-      cuda_linear_launch(voxelization_kernel<CoordinateOrder::ZYX>, _stream, num_points, _points, param_, hash_table_,
-                         d_voxel_num_, voxels_temp_, d_voxel_indices_);
       this->output_grid_size_ = {(int)param_.grid_size.z + 1, (int)param_.grid_size.y, (int)param_.grid_size.x};
-    } else
+    } else {
       Assertf(false, "Invalid output_order: %d", static_cast<int>(output_order));
+    }
 
-    checkRuntime(cudaStreamSynchronize(_stream));
+    checkRuntime(cudaMemsetAsync(d_valid_, 0, sizeof(unsigned int), 0));
+    cuda_linear_launch(voxel_key_kernel, 0, num_points, _points, param_, d_keys_, d_idxs_, d_valid_);
+    checkRuntime(cudaStreamSynchronize(0));
+    checkRuntime(cudaMemcpy(h_valid_, d_valid_, sizeof(unsigned int), cudaMemcpyDeviceToHost));
 
-    real_num_voxels_ = *h_real_num_voxels_;
-    cuda_linear_launch(reduce_mean_kernel, _stream, real_num_voxels_, voxels_temp_, d_voxel_num_, param_.max_points_per_voxel,
-                       param_.num_feature, d_voxel_features_);
+    real_num_voxels_ = 0;
+    unsigned int valid = *h_valid_;
+    if (valid == 0) return;
+
+    // stable sort：按 voxel key 升序，组内保持输入 index 顺序（= mmcv 点序）
+    thrust::device_ptr<uint64_t> dk(d_keys_);
+    thrust::device_ptr<int> di(d_idxs_);
+    thrust::stable_sort_by_key(dk, dk + valid, di);
+
+    // 唯一 voxel key + 每 voxel 组范围（[starts, ends)）
+    int num_voxels = (int)(thrust::unique_copy(dk, dk + valid, thrust::device_ptr<uint64_t>(d_voxel_keys_)) -
+                           thrust::device_ptr<uint64_t>(d_voxel_keys_));
+    if (num_voxels <= 0) return;
+    if (num_voxels > param_.max_voxels) num_voxels = param_.max_voxels;
+    thrust::upper_bound(dk, dk + valid, thrust::device_ptr<uint64_t>(d_voxel_keys_),
+                        thrust::device_ptr<uint64_t>(d_voxel_keys_) + num_voxels,
+                        thrust::device_ptr<int>(d_ends_));
+    cuda_linear_launch(voxel_start_kernel, 0, num_voxels, d_ends_, d_starts_);
+    int xyz_order = (output_order == CoordinateOrder::XYZ) ? 1 : 0;
+    cuda_linear_launch(voxel_reduce_kernel, 0, num_voxels, d_starts_, d_ends_, d_keys_, d_idxs_, _points, param_,
+                       param_.max_points_per_voxel, d_voxel_features_, d_voxel_indices_, xyz_order);
+    checkRuntime(cudaStreamSynchronize(0));
+    real_num_voxels_ = num_voxels;
+    (void)stream;
   }
 
   virtual unsigned int num_voxels() override { return real_num_voxels_; }
@@ -264,9 +193,9 @@ class VoxelizationImplement : public Voxelization {
 
   virtual std::vector<int> grid_size() override { return output_grid_size_; }
 
-  virtual const void *indices() override { return d_voxel_indices_; }
+  virtual const void* indices() override { return d_voxel_indices_; }
 
-  virtual const void *features() override { return d_voxel_features_; }
+  virtual const void* features() override { return d_voxel_features_; }
 
   virtual CoordinateOrder order() override { return order_; }
 
@@ -276,26 +205,23 @@ class VoxelizationImplement : public Voxelization {
   unsigned int real_num_voxels_ = 0;
   std::vector<int> output_grid_size_;
 
-  unsigned int *hash_table_ = nullptr;
-  float *voxels_temp_ = nullptr;
-  unsigned int *d_real_num_voxels_ = nullptr;
-  unsigned int *h_real_num_voxels_ = nullptr;
-  unsigned int *d_voxel_num_ = nullptr;
-  half *d_voxel_features_ = nullptr;
-  unsigned int *d_voxel_indices_ = nullptr;
-  unsigned int hash_table_size_;
-  unsigned int voxels_temp_size_;
-  unsigned int voxel_features_size_;
-  unsigned int voxel_idxs_size_;
-  unsigned int voxel_num_size_;
+  uint64_t* d_keys_ = nullptr;
+  int* d_idxs_ = nullptr;
+  uint64_t* d_voxel_keys_ = nullptr;
+  int* d_ends_ = nullptr;
+  int* d_starts_ = nullptr;
+  unsigned int* d_valid_ = nullptr;
+  unsigned int* h_valid_ = nullptr;
+  half* d_voxel_features_ = nullptr;
+  unsigned int* d_voxel_indices_ = nullptr;
 };
 
-std::shared_ptr<Voxelization> create_voxelization(VoxelizationParameter param) {
-  std::shared_ptr<VoxelizationImplement> impl(new VoxelizationImplement());
-  if (!impl->init(param)) {
-    impl.reset();
+std::shared_ptr<Voxelization> create_voxelization(VoxelizationParameter parameter) {
+  std::shared_ptr<VoxelizationImplement> instance(new VoxelizationImplement());
+  if (!instance->init(parameter)) {
+    instance.reset();
   }
-  return impl;
+  return instance;
 }
 
 };  // namespace lidar
