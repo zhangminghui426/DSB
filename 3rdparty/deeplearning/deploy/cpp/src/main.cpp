@@ -201,10 +201,10 @@ std::shared_ptr<bevfusion::Core> create_core(const std::string& model, const std
   transbbox.post_center_range_start = {-61.2, -61.2, -10.0};
   transbbox.post_center_range_end = {61.2, 61.2, 10.0};
   transbbox.voxel_size = {0.075, 0.075};
-  transbbox.model = nv::format("model/%s/build/head.bbox.plan", model.c_str());
+  transbbox.model = nv::format("model/%s/build/head.bbox.layernormplugin.plan", model.c_str());
 
-  // if you got an inaccurate boundingbox result please turn on the layernormplugin plan.
-  // transbbox.model = nv::format("model/%s/build/head.bbox.layernormplugin.plan", model.c_str());
+  // myelin layernorm fusion 版（快，但 TRT 已知 layernorm fusion bug → reg 爆炸）
+  // transbbox.model = nv::format("model/%s/build/head.bbox.plan", model.c_str());
   transbbox.confidence_threshold = 0.12f;
   transbbox.sorted_bboxes = true;
 
