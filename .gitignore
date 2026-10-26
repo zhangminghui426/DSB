@@ -5,6 +5,12 @@ outputs/
 # 权重、检查点（一般不上传git）
 ckpts/
 
+# 部署产物（ONNX / TRT engine）
+3rdparty/deeplearning/deploy/model/
+
+# 编译出的 Python CUDA 扩展
+3rdparty/deeplearning/ops/**/*.so
+
 # 数据集
 data/
 

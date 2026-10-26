@@ -67,17 +67,21 @@ function compile_trt_model(){
     # $3: number_of_input
     # $4: number_of_output
     # $5: extra_flags
+    # $6: onnx_name（可选，默认 $name）
+    # $7: output_name（可选，默认 $name；用于 head.bbox.fp32.plan）
     name=$1
     precision_flags=$2
     number_of_input=$3
     number_of_output=$4
     extra_flags=$5
+    onnx_name=${6:-$name}
+    output_name=${7:-$name}
     result_save_directory=$base/build
     mkdir -p ${SCRIPT_DIR}/model
-    onnx=$base/$name.onnx
+    onnx=$base/$onnx_name.onnx
 
-    if [ -s "${result_save_directory}/$name.plan" ]; then
-        echo Model ${result_save_directory}/$name.plan already build 🙋🙋🙋.
+    if [ -s "${result_save_directory}/$output_name.plan" ]; then
+        echo Model ${result_save_directory}/$output_name.plan already build 🙋🙋🙋.
         return
     fi
     
@@ -98,18 +102,18 @@ function compile_trt_model(){
     input_flags=${input_flags%?}
     output_flags=${output_flags%?}
 
-    cmd="--onnx=$base/$name.onnx ${precision_flags} ${input_flags} ${output_flags} ${extra_flags} \
-        --saveEngine=${result_save_directory}/$name.plan \
+    cmd="--onnx=$onnx ${precision_flags} ${input_flags} ${output_flags} ${extra_flags} \
+        --saveEngine=${result_save_directory}/$output_name.plan \
         --memPoolSize=workspace:2048 --verbose --dumpLayerInfo \
         --dumpProfile --separateProfileRun \
-        --profilingVerbosity=detailed --exportLayerInfo=${result_save_directory}/$name.json"
+        --profilingVerbosity=detailed --exportLayerInfo=${result_save_directory}/$output_name.json"
 
     mkdir -p $result_save_directory
-    echo Building the model: ${result_save_directory}/$name.plan, this will take several minutes. Wait a moment 🤗🤗🤗~.
-    trtexec $cmd > ${result_save_directory}/$name.log 2>&1
+    echo Building the model: ${result_save_directory}/$output_name.plan, this will take several minutes. Wait a moment 🤗🤗🤗~.
+    trtexec $cmd > ${result_save_directory}/$output_name.log 2>&1
     if [ $? != 0 ]; then
-        echo 😥 Failed to build model ${result_save_directory}/$name.plan.
-        echo You can check the error message by ${result_save_directory}/$name.log 
+        echo 😥 Failed to build model ${result_save_directory}/$output_name.plan.
+        echo You can check the error message by ${result_save_directory}/$output_name.log
         exit 1
     fi
 }
@@ -121,8 +125,10 @@ compile_trt_model "fuser" "$trtexec_dynamic_flags" 2 1
 # fp16 only
 compile_trt_model "camera.vtransform" "$trtexec_fp16_flags" 1 1
 
-# for myelin layernorm head.bbox, may occur a tensorrt bug at layernorm fusion but faster
-compile_trt_model "head.bbox" "$trtexec_fp16_flags" 1 6
+# head.bbox 必须用 fp32 层构建（不加 --fp16）：fp16 + myelin/layernorm fusion
+# 有 TensorRT 数值 bug（reg 偏差 68~133），C++ 侧（src/main.cpp）加载
+# head.bbox.fp32.plan。IO 仍为 fp16:chw，与 C++ binding 的 half 类型一致。
+compile_trt_model "head.bbox" "" 1 6 "" "head.bbox" "head.bbox.fp32"
 
 # for layernorm version head.bbox.onnx, accurate but slower
 # compile_trt_model "head.bbox.layernormplugin" "$trtexec_fp16_flags" 1 6 "--plugins=libcustom_layernorm.so"

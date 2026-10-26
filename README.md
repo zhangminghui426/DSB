@@ -12,11 +12,11 @@ DSB/
 │   ├── deeplearning/        # 深度学习模型库
 │   │   ├── models/          # BEVFusion/FlashOCC 模型 + SECOND 标定板检测器
 │   │   ├── datasets/ scripts/ configs/ ops/ tools/ tests/ launch/
-│   │   └── deploy/          # TRT 推理部署
-│   │       ├── python/      # Python 推理（scripts/ 入口 + 库三层）
-│   │       ├── cpp/         # C++ 推理（include/ + src/，同三层 + ops）
-│   │       ├── tools/       # C++ 输入导出
-│   │       └── launch/      # export/infer_trt/visualize_trt 启动脚本
+│   │   └── deploy/          # TRT 推理部署（C++）
+│   │       ├── scripts/     # export.py：分模块 ONNX 导出（5 张图）
+│   │       ├── src/         # C++ 推理（CUDA-BEVFusion 移植）
+│   │       ├── tool/        # example-data 导出、三端对拍、环境脚本
+│   │       └── model/       # ONNX / TRT engine（生成产物）
 │   └── fast_calib/          # 雷达-相机外参标定
 ├── packet/                  # Docker 安装包（CUDA/cuDNN/TensorRT）
 ├── tools/                   # 工程工具
@@ -55,20 +55,19 @@ cd 3rdparty/deeplearning
 python scripts/train.py configs/det_convfuser.py --load_from ckpts/bevfusion-det-bf.pth
 python scripts/test.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --eval bbox
 
-# 导出 ONNX + 构建 TRT engine（Python/C++ 推理共用的前置步骤；--verify 用 onnxruntime 逐图校验）
-python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --task det --verify --fp16
+# 1) 导出分模块 ONNX（5 张图，含 SCN；--verify 用 onnxruntime 逐图校验）
+python deploy/scripts/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --verify
 
-# TRT 推理（直接用 engine，不需要 .pth）并保存解码结果
-python deploy/python/scripts/pipeline.py configs/det_convfuser.py --task det \
-    --engine_dir outputs/trt --sample-index 5 --dump outputs/trt/sample5.npz
+# 2) 拷贝 ONNX 到 deploy/model/resnet50/ 并构建 TRT engine
+#    （head.bbox 自动用 fp32 层构建为 head.bbox.fp32.plan）
+DEBUG_MODEL=resnet50 DEBUG_PRECISION=fp16 bash deploy/build_trt_engine.sh
 
-# 与 torch 参考对照（可选，需 checkpoint）
-python deploy/python/scripts/pipeline.py configs/det_convfuser.py --checkpoint ckpts/bevfusion-det-bf.pth \
-    --task det --engine_dir outputs/trt --verify
+# 3) 生成 C++ 输入（6 相机 jpg + 矩阵/点云 tensor）
+python deploy/tool/export_example_data.py configs/det_convfuser.py \
+    ckpts/bevfusion-det-bf.pth --sample-index 0
 
-# 部署启动脚本（export / infer / visualize）
-bash deploy/launch/export.sh det
-bash deploy/launch/infer_trt.sh det
+# 4) C++ 推理（输出解码框 + build/cuda-bevfusion.jpg）
+cd deploy && bash tool/run.sh
 ```
 
 ```bash
@@ -85,9 +84,7 @@ cd 3rdparty/deeplearning/models/calib_board_detector && python train.py
 ## 详细文档
 
 - [3rdparty/deeplearning/README.md](3rdparty/deeplearning/README.md) — 模型库结构、训练/评估
-- [3rdparty/deeplearning/deploy/README.md](3rdparty/deeplearning/deploy/README.md) — TRT 部署（前置导出 / Python / C++ 推理）
-- [3rdparty/deeplearning/deploy/python/README.md](3rdparty/deeplearning/deploy/python/README.md) — Python TRT 推理（scripts/ 入口 + 库三层）
-- [3rdparty/deeplearning/deploy/cpp/README.md](3rdparty/deeplearning/deploy/cpp/README.md) — C++ 推理流水线、编译与运行
+- [3rdparty/deeplearning/deploy/README.md](3rdparty/deeplearning/deploy/README.md) — TRT 部署（ONNX 导出 + C++ 推理）
 - [3rdparty/fast_calib/README.md](3rdparty/fast_calib/README.md) — 雷达-相机外参标定
 - [tools/README.md](tools/README.md) — 工程工具说明
 - [src/README.md](src/README.md) — ROS2 集成预留说明

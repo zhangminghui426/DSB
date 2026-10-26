@@ -41,6 +41,5 @@ make -j
 
 cd ..
 
-# 运行：cwd 切到 deploy/（模型/数据统一相对 deploy/）
-cd ..
+# 运行：cwd 保持在 deploy/（model/ 相对 deploy/，example-data 在 deeplearning/outputs/）
 ./build/bevfusion ${DEBUG_DATA:-../outputs/example-data} ${DEBUG_MODEL:-resnet50} ${DEBUG_PRECISION:-fp16}

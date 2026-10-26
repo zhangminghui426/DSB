@@ -94,12 +94,32 @@ if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
   endforeach()
 endif()
 
+# CUDA 编译器必须与 CUDA_ROOT 匹配：/usr/bin/nvcc 可能是旧版本
+# （本机为 CUDA 12.0），会缺少 sm_120 等新架构支持且与 12.8 运行库混用。
+# 已存在的 build/ 缓存不会自动更换编译器，需删除 build/ 后重新 configure。
+if(NOT DEFINED CMAKE_CUDA_COMPILER AND EXISTS "${CUDA_ROOT}/bin/nvcc")
+  set(CMAKE_CUDA_COMPILER "${CUDA_ROOT}/bin/nvcc" CACHE FILEPATH "CUDA compiler")
+endif()
+# 关闭 CMake 自动追加的默认架构（如 compute_52），架构统一由
+# BEVFUSION_CUDA_ARCHS 的 -gencode 控制。
+set(CMAKE_CUDA_ARCHITECTURES OFF)
+
 enable_language(CUDA)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS_RELEASE "-std=c++17 -O3 -DENABLE_TEXT_BACKEND_STB -Wno-deprecated-declarations -Wno-unused-parameter")
+message(STATUS "CUDA compiler: ${CMAKE_CUDA_COMPILER} (${CMAKE_CUDA_COMPILER_VERSION})")
 
 find_package(Protobuf REQUIRED)
+
+# SM 架构：80/86/89/90 通用；CUDA >= 12.8 追加 Blackwell sm_120（RTX 50 系）。
+# 不追加时自定义 kernel 在 sm_120 上会报
+# "no kernel image is available for execution on the device"。
+set(BEVFUSION_CUDA_ARCHS 80 86 89 90)
+if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.8)
+  list(APPEND BEVFUSION_CUDA_ARCHS 120)
+endif()
+message(STATUS "CUDA archs: ${BEVFUSION_CUDA_ARCHS}")
 
 function(bevfusion_cuda_target name type)
   if(type STREQUAL "EXECUTABLE")
@@ -108,11 +128,10 @@ function(bevfusion_cuda_target name type)
     add_library(${name} ${type} ${ARGN})
   endif()
   set_target_properties(${name} PROPERTIES CUDA_STANDARD 17)
-  target_compile_options(${name} PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_80,code=sm_80>
-    $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_86,code=sm_86>
-    $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_89,code=sm_89>
-    $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_90,code=sm_90>)
+  foreach(_arch IN LISTS BEVFUSION_CUDA_ARCHS)
+    target_compile_options(${name} PRIVATE
+      $<$<COMPILE_LANGUAGE:CUDA>:-gencode=arch=compute_${_arch},code=sm_${_arch}>)
+  endforeach()
 endfunction()
 
 ####################### bevfusion_core ##########################

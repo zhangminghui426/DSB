@@ -56,7 +56,8 @@ deploy/
   - head.bbox.onnx：middle → score/rot/dim/reg/height/vel
   - lidar.backbone.xyz.onnx：稀疏编码器（libspconv 运行时解析，不走 TRT）
 - deploy/model/<name>/build/：4 个 .plan（camera.backbone / camera.vtransform / fuser /
-  head.bbox，--fp16 + IO fp16:chw）
+  head.bbox.fp32，IO 均为 fp16:chw；head.bbox 用 fp32 层以规避 TRT fp16
+  数值 bug，构建脚本已自动处理）
 
 ## 自定义算子归属
 
