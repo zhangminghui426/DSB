@@ -6,22 +6,19 @@
 \begin{document}
 \begin{tikzpicture}
 
-% ================================================================ inputs (real sample)
-\node[inner sep=1pt, draw=inkA!40, line width=0.5pt, rounded corners=2pt, fill=white] (cam_in) at (0,17)
-  {\includegraphics[width=4.0cm]{figs/cameras.png}};
-\node[tag, anchor=north] at (0,16.05) {6 cameras $\cdot$ real val frame};
-
-\node[inner sep=1pt, draw=inkA!40, line width=0.5pt, rounded corners=2pt, fill=black] (lidar_in) at (0,8)
+% ================================================================ inputs (shared by both networks)
+\node[inner sep=1pt, draw=inkA!40, line width=0.5pt, rounded corners=2pt, fill=black] (lidar_in) at (0,17)
   {\includegraphics[width=2.5cm]{figs/lidar_bev.png}};
-\node[tag, anchor=north] at (0,6.6) {LiDAR point cloud (BEV)};
+\node[tag, anchor=north] at (0,15.4) {LiDAR point cloud (BEV)};
 
 \node[io, text width=3.6cm] (extr) at (0,12.5)
   {\textbf{Extrinsics / aug}\\camera2lidar $\cdot$ lidar2ego\\
    img\_aug $\cdot$ lidar\_aug};
 
-\node[io, text width=3.4cm, inner sep=2pt] (occ_in) at (0,2.5)
-  {\includegraphics[width=2.6cm]{figs/cameras.png}\\[1pt]
-   \scriptsize 6 cameras + 7-tuple geometry};
+\node[inner sep=1pt, draw=inkA!40, line width=0.5pt, rounded corners=2pt, fill=white] (cam_in) at (0,2.5)
+  {\includegraphics[width=4.0cm]{figs/cameras.png}};
+\node[tag, anchor=north, text width=5.0cm] at (0,1.45)
+  {6 cameras (shared) $\cdot$ 7-tuple geometry for FlashOCC};
 
 % ================================================================ BEVFusion
 \node[cam] (swin) at (4.6,17) {Swin-T\\+ GeneralizedLSSFPN};
@@ -38,10 +35,10 @@
 \node[det, text width=3.0cm] (object) at (26.6,17) {\textbf{TransFusion} head\\3D detection};
 \node[seg, text width=3.0cm] (map)    at (26.6,8)  {\textbf{BEV seg} head\\6-class map};
 
-\draw[arr] (cam_in) -- (swin);
+\draw[arr] (lidar_in.west) -- (-2.0,17) -- (-2.0,8) -- (vox.west);
+\draw[arr] (cam_in.east) -- (2.0,18.6) -- (4.6,18.6) -- (swin.north);
 \draw[arr] (swin) -- (vt);
 \draw[arr] (vt) -- (cam_bev);
-\draw[arr] (lidar_in) -- (vox);
 \draw[arr] (vox) -- (scn);
 \draw[arr] (scn) -- (lid_bev);
 
@@ -57,17 +54,17 @@
 \node[cam] (bevenc) at (13.4,2.5) {CustomResNet\\+ FPN\_LSS\\256$\times$200$\times$200};
 \node[occ] (occhead) at (17.8,2.5) {BEVOCCHead2D\\$18\times16$ channels};
 
-\draw[arr] (occ_in) -- (r50);
 \draw[arr] (r50) -- (lss_occ);
 \draw[arr] (lss_occ) -- (bevenc);
 \draw[arr] (bevenc) -- (occhead);
+\draw[arr] (cam_in.east) -- (r50.west);
 
 % extrinsics bus (dashed) feeding both view transforms
-\draw[darr] (extr.east) -- (2.45,12.5);
-\draw[darr] (2.45,18.2) -- (2.45,3.6);
-\node[tag, rotate=90] at (2.23,11.0) {geometry};
-\draw[darr] (2.45,18.2) -| (8.8,17.75) -- (vt.north);
-\draw[darr] (2.45,3.6)  -| (8.8,3.6)  -- (lss_occ.north);
+\draw[darr] (extr.east) -- (2.75,12.5);
+\draw[darr] (2.75,18.2) -- (2.75,3.6);
+\node[tag, rotate=90] at (2.53,11.0) {geometry};
+\draw[darr] (2.75,18.2) -| (8.8,17.75) -- (vt.north);
+\draw[darr] (2.75,3.6)  -| (8.8,3.6)  -- (lss_occ.north);
 
 % ================================================================ outputs (real inference)
 \node[inner sep=1.5pt, draw=inkA!40, line width=0.5pt, rounded corners=3pt, fill=white] (det_out) at (33,17)
