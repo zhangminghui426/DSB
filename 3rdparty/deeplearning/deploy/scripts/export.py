@@ -246,9 +246,7 @@ def _sample_inputs(cfg, model):
             "img_aug_matrix": eye4.unsqueeze(0).repeat(6, 1, 1),
             "lidar_aug_matrix": eye4.unsqueeze(0).repeat(6, 1, 1),
         }
-        cam_bev = torch.randn(1, 80, 360, 360, device=dev, dtype=dt)
         lidar_bev = torch.randn(1, 256, 180, 180, device=dev, dtype=dt)
-        decoder_feat = FuserDecoder(model)(cam_bev, lidar_bev)
         # bev_pool 输出（DownsampleBf 输入，360x360）
         vt = model.encoders["camera"]["vtransform"]
         B, N = img.shape[0], img.shape[1]
@@ -267,12 +265,13 @@ def _sample_inputs(cfg, model):
             extra_rots=batch["lidar_aug_matrix"][..., :3, :3],
             extra_trans=batch["lidar_aug_matrix"][..., :3, 3],
         )
-        bev360 = vt.bev_pool(geom, x)  # (B, C, 360, 360)
+        bev360 = vt.bev_pool(geom, x)    # (B, C, 360, 360)（DownsampleBf 输入）
+        cam_bev = vt.downsample(bev360)  # (B, C, 180, 180)（FuserDecoder 输入）
         middle = FuserDecoder(model)(cam_bev, lidar_bev)  # head.bbox 输入
 
     return dict(batch=batch, sample=None, img=img, feats=feats, depth=depth,
                 depthnet=depthnet, cam_bev=cam_bev, lidar_bev=lidar_bev,
-                decoder_feat=decoder_feat, bev360=bev360, middle=middle)
+                bev360=bev360, middle=middle)
 
 
 # ------------------------------------------------------------------ SCN onnx
