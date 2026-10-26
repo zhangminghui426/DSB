@@ -126,6 +126,7 @@ def load_dump(name, dump_dir, sub="torch"):
 
 def dump_bf_tensor(arr, path):
     """save_tensor 格式（与 C++ BEVFUSION_DUMP_DIR / export_example_data 一致）。"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     arr = np.ascontiguousarray(arr)
     with open(path, "wb") as f:
         f.write(np.array([0x33FF1101, arr.ndim, {"int32": 1, "float16": 2, "float32": 3}[arr.dtype.name]],
