@@ -94,3 +94,4 @@ cd 3rdparty/deeplearning/models/calib_board_detector && python train.py
 
 - BEV 3D 目标检测（mini-val NDS/mAP 0.585）、语义分割（mean IoU@max 0.718）、占据网络（mIoU 24.09）
 - 标定板自动检测（SECOND 3D 检测器）、雷达-相机外参标定（fast_calib）、Streamlit 可视化界面
+- C++ TRT 推理端到端（per-layer SCN）：检测框与 torch 参考位置差 ~1–2cm，运行稳定

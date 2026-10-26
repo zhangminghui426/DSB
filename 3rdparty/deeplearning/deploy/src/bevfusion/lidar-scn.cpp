@@ -26,12 +26,15 @@
 #include <spconv/engine.hpp>
 #include "lidar-scn-onnx-parser.hpp"
 
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "common/check.hpp"
+#include "bevfusion/lidar-scn-layers.hpp"
 
 namespace bevfusion {
 namespace lidar {
@@ -191,7 +194,176 @@ class SCNImplement : public SCN {
   int override_nv_ = 0;
 };
 
+// ---------------------------------------------------------------------------
+// Per-layer SCN：libspconv 在单个 graph 里串联多个 SparseConvolution 时，对稀疏
+// 邻域（缺失邻居）会算错；逐 conv 建 engine + 主机侧 ReLU/Add 与 torch 对齐
+// （lidar_bev corr ~0.99996，单 graph 仅 ~0.13）。
+// 层序列对应 configs/det_convfuser.py 的 SparseEncoder；需要
+// <scn_dir>/layers/conv{0..20}.onnx（deploy/scripts/export.py 自动拆分）。
+// ---------------------------------------------------------------------------
+static std::string scn_layer_dir(const std::string& model_path) {
+  const char* env = getenv("BEVFUSION_SCN_LAYERS_DIR");
+  if (env != nullptr && env[0] != '\0') return env;
+  auto pos = model_path.find_last_of("/\\");
+  std::string dir = (pos == std::string::npos) ? std::string(".") : model_path.substr(0, pos);
+  return dir + "/layers";
+}
+
+static bool scn_file_exists(const std::string& path) {
+  FILE* f = fopen(path.c_str(), "rb");
+  if (f == nullptr) return false;
+  fclose(f);
+  return true;
+}
+
+class SCNPerLayer : public SCN {
+ public:
+  ~SCNPerLayer() override {
+    if (folded_ != nullptr) checkRuntime(cudaFree(folded_));
+  }
+
+  bool init(const SCNParameter& param) {
+    param_ = param;
+    voxelization_ = create_voxelization(param_.voxelization);
+    if (voxelization_ == nullptr) return false;
+
+    // 层序列/网格按 configs/det_convfuser.py（5 维特征、±54m、0.075m）硬编码；
+    // 配置不符时回退单 graph，避免静默算错。
+    auto gs = voxelization_->grid_size();
+    if (param_.voxelization.num_feature != 5 || param_.order != CoordinateOrder::XYZ ||
+        gs.size() != 3 || gs[0] != 1440 || gs[1] != 1440 || gs[2] != 41) {
+      printf("[scn] per-layer: unsupported config (features=%d grid=%d,%d,%d order=%d)\n",
+             param_.voxelization.num_feature, gs.size() > 0 ? gs[0] : -1,
+             gs.size() > 1 ? gs[1] : -1, gs.size() > 2 ? gs[2] : -1,
+             (int)param_.order);
+      return false;
+    }
+
+    layers_dir_ = scn_layer_dir(param_.model);
+    engines_.resize(kNumConv);
+    for (int i = 0; i < kNumConv; ++i) {
+      std::string path = layers_dir_ + "/conv" + std::to_string(i) + ".onnx";
+      if (!scn_file_exists(path)) {
+        printf("[scn] per-layer: missing %s\n", path.c_str());
+        return false;
+      }
+      engines_[i] = spconv::load_engine_from_onnx(
+          path, static_cast<spconv::Precision>(param_.precision));
+      if (engines_[i] == nullptr) {
+        printf("[scn] per-layer: failed to load %s\n", path.c_str());
+        return false;
+      }
+    }
+    checkRuntime(cudaMalloc(&folded_, (size_t)kOutC * kOutZ * kOutX * kOutY *
+                                           sizeof(nvtype::half)));
+    printf("[scn] per-layer mode: %d engines from %s\n", kNumConv, layers_dir_.c_str());
+    return true;
+  }
+
+  const nvtype::half* forward(const nvtype::half* points, unsigned int num_points,
+                              void* stream) override {
+    voxelization_->forward(points, num_points, stream, param_.order);
+    int nv = (int)voxelization_->num_voxels();
+    if (nv <= 0) return nullptr;
+    tensors_[0] = {(const nvtype::half*)voxelization_->features(),
+                   (const int*)voxelization_->indices(), nv,
+                   (int)voxelization_->voxel_dim()};
+
+    // conv / ReLU / residual Add 顺序与 ONNX trace 一致；ReLU 原地做，
+    // 因此残差 identity 直接复用前一个 conv 输出 buffer。
+    run_conv(0, 0, 1, 1440, 1440, 41, stream); relu(1, stream);
+    run_conv(1, 1, 3, 1440, 1440, 41, stream); relu(3, stream);
+    run_conv(2, 3, 5, 1440, 1440, 41, stream); add(5, 1, stream); relu(5, stream);
+    run_conv(3, 5, 8, 1440, 1440, 41, stream); relu(8, stream);
+    run_conv(4, 8, 10, 1440, 1440, 41, stream); add(10, 5, stream); relu(10, stream);
+    run_conv(5, 10, 13, 1440, 1440, 41, stream); relu(13, stream);
+    run_conv(6, 13, 15, 720, 720, 21, stream); relu(15, stream);
+    run_conv(7, 15, 17, 720, 720, 21, stream); add(17, 13, stream); relu(17, stream);
+    run_conv(8, 17, 20, 720, 720, 21, stream); relu(20, stream);
+    run_conv(9, 20, 22, 720, 720, 21, stream); add(22, 17, stream); relu(22, stream);
+    run_conv(10, 22, 25, 720, 720, 21, stream); relu(25, stream);
+    run_conv(11, 25, 27, 360, 360, 11, stream); relu(27, stream);
+    run_conv(12, 27, 29, 360, 360, 11, stream); add(29, 25, stream); relu(29, stream);
+    run_conv(13, 29, 32, 360, 360, 11, stream); relu(32, stream);
+    run_conv(14, 32, 34, 360, 360, 11, stream); add(34, 29, stream); relu(34, stream);
+    run_conv(15, 34, 37, 360, 360, 11, stream); relu(37, stream);
+    run_conv(16, 37, 39, 180, 180, 5, stream); relu(39, stream);
+    run_conv(17, 39, 41, 180, 180, 5, stream); add(41, 37, stream); relu(41, stream);
+    run_conv(18, 41, 44, 180, 180, 5, stream); relu(44, stream);
+    run_conv(19, 44, 46, 180, 180, 5, stream); add(46, 41, stream); relu(46, stream);
+    run_conv(20, 46, 49, 180, 180, 5, stream); relu(49, stream);
+
+    const auto& last = tensors_[49];
+    scn_scatter_fold(last.feat, last.idx, folded_, last.m, last.c,
+                     kOutX, kOutY, kOutZ, stream);
+    return folded_;
+  }
+
+  std::vector<int64_t> shape() override { return {1, kOutC * kOutZ, kOutX, kOutY}; }
+
+ private:
+  static constexpr int kNumConv = 21;
+  static constexpr int kOutC = 128;
+  static constexpr int kOutX = 180;
+  static constexpr int kOutY = 180;
+  static constexpr int kOutZ = 2;
+
+  struct TensorRef {
+    const nvtype::half* feat = nullptr;
+    const int* idx = nullptr;
+    int m = 0;
+    int c = 0;
+  };
+
+  void run_conv(int conv, int in_id, int out_id, int gx, int gy, int gz, void* stream) {
+    auto& e = engines_[conv];
+    const auto& in = tensors_[in_id];
+    e->input(0)->features().reference((void*)in.feat, {in.m, in.c},
+                                      spconv::DataType::Float16);
+    e->input(0)->indices().reference((void*)in.idx, {in.m, 4},
+                                     spconv::DataType::Int32);
+    e->input(0)->set_grid_size({gx, gy, gz});
+    e->forward(stream);
+    auto fs = e->output(0)->features().shape;
+    tensors_[out_id] = {(const nvtype::half*)e->output(0)->features().ptr<nvtype::half>(),
+                        (const int*)e->output(0)->indices().ptr<int>(),
+                        (int)fs[0], (int)fs[1]};
+  }
+
+  void relu(int id, void* stream) {
+    auto& t = tensors_[id];
+    scn_relu_half((nvtype::half*)t.feat, (size_t)t.m * t.c, stream);
+  }
+
+  void add(int id, int ident, void* stream) {
+    auto& t = tensors_[id];
+    const auto& o = tensors_[ident];
+    Assertf(t.m == o.m && t.c == o.c, "SCN add shape mismatch: %d x %d vs %d x %d",
+            t.m, t.c, o.m, o.c);
+    scn_add_half((nvtype::half*)t.feat, o.feat, (size_t)t.m * t.c, stream);
+  }
+
+  SCNParameter param_;
+  std::string layers_dir_;
+  std::shared_ptr<Voxelization> voxelization_;
+  std::vector<std::shared_ptr<spconv::Engine>> engines_;
+  std::array<TensorRef, 54> tensors_;
+  nvtype::half* folded_ = nullptr;
+};
+
 std::shared_ptr<SCN> create_scn(const SCNParameter& param) {
+  const char* mode = getenv("BEVFUSION_SCN_PER_LAYER");
+  bool use_per_layer = false;
+  if (mode != nullptr) {
+    use_per_layer = (strcmp(mode, "0") != 0);
+  } else {
+    use_per_layer = scn_file_exists(scn_layer_dir(param.model) + "/conv0.onnx");
+  }
+  if (use_per_layer) {
+    std::shared_ptr<SCNPerLayer> instance(new SCNPerLayer());
+    if (instance->init(param)) return instance;
+    printf("[scn] per-layer init failed, fallback to monolithic engine\n");
+  }
   std::shared_ptr<SCNImplement> instance(new SCNImplement());
   if (!instance->init(param)) {
     instance.reset();
