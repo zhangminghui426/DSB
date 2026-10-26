@@ -23,6 +23,84 @@ import os.path as osp
 
 import numpy as np
 import torch
+from torch import nn
+
+
+# ------------------------------------------------------------------ 对拍专用 wrapper
+# （原 deploy/export_bf.py，已内联：BF 结构与 CUDA-BEVFusion 引擎输入对齐）
+class CamBackboneBf(nn.Module):
+    """backbone + neck + dtransform + depthnet 合并（CUDA-BEVFusion 结构）。
+
+    forward(img, depth):
+        img (B,N,3,H,W) + depth (B,N,1,H,W)
+        -> camera_feature (B,N,fH,fW,C)（HWC，bevpool kernel 按此布局）
+        -> camera_depth_weights (B,N,D,fH,fW)（已 softmax）
+    """
+
+    def __init__(self, model):
+        super().__init__()
+        self.backbone = model.encoders["camera"]["backbone"]
+        self.neck = model.encoders["camera"]["neck"]
+        self.vt = model.encoders["camera"]["vtransform"]
+        self.D = self.vt.D
+        self.C = self.vt.C
+
+    def forward(self, img, depth):
+        B, N, C, H, W = img.size()
+        x = img.view(B * N, C, H, W)
+        x = self.backbone(x)
+        x = self.neck(x)
+        if not torch.is_tensor(x):
+            x = x[0]
+        BN, C, fH, fW = x.size()
+        feat = x.view(B, N, C, fH, fW)
+
+        d = depth.view(B * N, *depth.shape[2:])
+        d = self.vt.dtransform(d)
+        x = torch.cat([d, feat.view(B * N, C, fH, fW)], dim=1)
+        x = self.vt.depthnet(x)  # (B*N, D+C, fH, fW)
+        x = x.view(B, N, -1, fH, fW)
+        depth_weights = x[:, :, : self.D].softmax(dim=2)      # (B,N,D,fH,fW)
+        feature = x[:, :, self.D : self.D + self.C].permute(0, 1, 3, 4, 2)
+        return feature, depth_weights                        # (B,N,fH,fW,C)
+
+
+class DownsampleBf(nn.Module):
+    """bev_pool 输出 (1,80,360,360) -> (1,80,180,180)（= vtransform.downsample）。"""
+
+    def __init__(self, model):
+        super().__init__()
+        self.downsample = model.encoders["camera"]["vtransform"].downsample
+
+    def forward(self, feat_in):
+        return self.downsample(feat_in)
+
+
+class HeadBboxBf(nn.Module):
+    """transfusion head 原始预测（decode 留在 C++）。
+
+    forward(middle): (1,512,180,180)
+        -> (score, rot, dim, reg, height, vel)
+        score = heatmap.sigmoid() * query_heatmap_score * one_hot   (B,num_classes,num)
+    """
+
+    def __init__(self, model):
+        super().__init__()
+        self.head = model.heads["object"]
+        self.head.onnx_export = True  # unfold/amax 代替 max_pool2d
+        self.num_classes = self.head.num_classes
+
+    def forward(self, x):
+        pd = self.head.forward_single(x, None, None)[0]
+        one_hot = (
+            torch.nn.functional.one_hot(
+                self.head.query_labels.long(), self.num_classes
+            )
+            .permute(0, 2, 1)
+            .float()
+        )
+        score = pd["heatmap"].sigmoid() * pd["query_heatmap_score"] * one_hot
+        return score, pd["rot"], pd["dim"], pd["center"], pd["height"], pd["vel"]
 
 
 def load_tensor(p):
@@ -102,7 +180,6 @@ def backend_torch(cfg, ckpt, dump_dir, sample_index=0, cpp_dir="outputs/model_di
     from models import build_model
     from scripts.trainer import load_model_checkpoint, to_device
     from datasets import build_dataset, collate_fn
-    from deploy.export_bf import CamBackboneBf, DownsampleBf, HeadBboxBf
     from deploy.export import CamVtransformDet, FuserDecoder
 
     cfg = load_config(cfg)
