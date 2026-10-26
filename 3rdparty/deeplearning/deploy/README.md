@@ -2,7 +2,7 @@
 
 C++ 推理完全移植 NVIDIA CUDA-BEVFusion（deploy/cpp/），不再区分预处理/推理/后处理三层，
 直接采用参考实现 src/bevfusion/ 平铺结构。部署只走 C++；Python 侧仅负责模型导出
-（deploy/export_bf.py，按 CUDA-BEVFusion 模型结构导出 5 个 onnx）与 engine 构建前置。
+（deploy/export.py，按 CUDA-BEVFusion 模型结构导出 5 个 onnx）与 engine 构建前置。
 
 ## 目录结构
 
@@ -11,8 +11,7 @@ deploy/
 ├── README.md           # 本文件（部署总览）
 ├── build_trt_engine.sh # engine 构建脚本（CUDA-BEVFusion 原版，trtexec --fp16 + IO fp16:chw，
 │                       #   输出 model/<name>/build/*.plan）
-├── export_bf.py        # CUDA-BEVFusion 结构 ONNX 导出（5 个 onnx + verify）
-├── export.py           # 分模块 ONNX 导出库（export_bf.py 复用其 helper）
+├── export.py           # 唯一 ONNX 导出脚本（det: BF 结构 5 图 + SCN；--verify 数值对拍）
 ├── python/             # 导出链依赖的 tensor 名常量（graphs），无推理代码
 ├── lean/               # SCN onnx 导出库（符号 trace / BN 融合 / inverse 支持）
 ├── cpp/                # C++ 推理（CUDA-BEVFusion 完整移植，见 cpp/README.md）
@@ -27,7 +26,7 @@ deploy/
 1. 导出模型 onnx（Python，5 个 onnx → outputs/onnx_bf/）：
    ```bash
    cd 3rdparty/deeplearning
-   python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx_bf
+   python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx --verify
    ```
 2. 构建 engine（build_trt_engine.sh，输出 model/<name>/build/）：
    ```bash

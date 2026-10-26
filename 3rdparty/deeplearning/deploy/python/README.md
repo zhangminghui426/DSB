@@ -8,7 +8,7 @@ engine 构建统一走 CUDA-BEVFusion 原版脚本 deploy/build_trt_engine.sh（
 
 ```
 deploy/
-├── export_bf.py          # 主入口：CUDA-BEVFusion 结构 ONNX 导出 + verify
+├── export.py             # 主入口：CUDA-BEVFusion 结构 ONNX 导出 + verify（唯一导出脚本）
 ├── lean/                 # NVIDIA qat/lean 移植（SCN onnx 导出，去除 mmdet3d 依赖）
 │   ├── exptool.py        #   SparseConvolution 符号 trace、onnx 节点构建
 │   ├── funcs.py          #   layer_fusion_bn（BN 融合进卷积权重）
@@ -39,7 +39,7 @@ kernel）不兼容，必须按上表重新导出。
 ## 导出
 
 ```bash
-cd 3rdparty/deeplearning && python deploy/export_bf.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx_bf --verify
+cd 3rdparty/deeplearning && python deploy/export.py configs/det_convfuser.py ckpts/bevfusion-det-bf.pth --outdir outputs/onnx --verify
 ```
 
 参数：--outdir（onnx 输出目录，默认 outputs/onnx_bf）、--verify（用 onnxruntime
