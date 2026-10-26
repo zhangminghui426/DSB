@@ -61,7 +61,8 @@ static void dump_voxelize(Voxelization* v, void* stream) {
   f = fopen((std::string(dir) + "/trt_lidar_feats").c_str(), "wb");
   hdr[2] = 2;  // 2 = float16
   fwrite(hdr, sizeof(int), 3, f);
-  fwrite(dims, sizeof(int), 2, f);
+  int fdims[2] = {nv, fd};  // feats 是 (nv, feat_dim)，不是 indices_dim
+  fwrite(fdims, sizeof(int), 2, f);
   fwrite(h_feat.data(), sizeof(nvtype::half), (size_t)nv * fd, f);
   fclose(f);
   printf("[dump] trt_lidar_coords/feats num_voxels=%d indices_dim=%d feat_dim=%d\n", nv, id, fd);
