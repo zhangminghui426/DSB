@@ -233,7 +233,7 @@ def _sample_inputs(cfg, model):
     全部使用固定形状的随机/单位张量（不依赖推理链路）。
     det 按 BF 结构补算 bev360（DownsampleBf 的输入）。
     """
-    dev, dt = "cuda", torch.float16
+    dev, dt = "cuda", torch.float32  # 模型 fp32（onnx fp32；TRT 侧由 trtexec --fp16 转 fp16 引擎）
     img = torch.randn(1, 6, 3, 256, 704, device=dev, dtype=dt)
     with torch.no_grad():
         feats = CamBackbone(model)(img)
