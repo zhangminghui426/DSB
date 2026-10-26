@@ -37,8 +37,9 @@
 // deploy/tools/export_example_data.py save_tensor 一致：3xint32 header +
 // dims + 原始数据），供 deploy/tools/model_diff.py --backend trt-full 对比。
 // dev 为 device 指针：先 D2H 拷贝再写盘（直接 fwrite 设备内存会段错误）。
+// stream 沿用 forward 接口的 void* 风格（内部 cast）。
 static void dump_mid_tensor(const char* name, const nvtype::half* dev,
-                            const std::vector<int>& shape, cudaStream_t stream) {
+                            const std::vector<int>& shape, void* stream) {
   const char* dir = getenv("BEVFUSION_DUMP_DIR");
   if (!dir) return;
   int64_t n = 1;
@@ -50,9 +51,10 @@ static void dump_mid_tensor(const char* name, const nvtype::half* dev,
   fwrite(hdr, sizeof(int), 3, f);
   for (int s : shape) fwrite(&s, sizeof(int), 1, f);
   std::vector<nvtype::half> host(n);
+  cudaStream_t s = (cudaStream_t)stream;
   checkRuntime(cudaMemcpyAsync(host.data(), dev, n * sizeof(nvtype::half),
-                               cudaMemcpyDeviceToHost, stream));
-  checkRuntime(cudaStreamSynchronize(stream));
+                               cudaMemcpyDeviceToHost, s));
+  checkRuntime(cudaStreamSynchronize(s));
   fwrite(host.data(), sizeof(nvtype::half), n, f);
   fclose(f);
   printf("[dump] trt_%s shape=(%d", name, shape[0]);
