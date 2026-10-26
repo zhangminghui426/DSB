@@ -180,7 +180,7 @@ def backend_torch(cfg, ckpt, dump_dir, sample_index=0, cpp_dir="outputs/model_di
     from models import build_model
     from scripts.trainer import load_model_checkpoint, to_device
     from datasets import build_dataset, collate_fn
-    from deploy.export import CamVtransformDet, FuserDecoder
+    from deploy.scripts.export import CamVtransformDet, FuserDecoder
 
     cfg = load_config(cfg)
     model = build_model(cfg.model).cuda().eval()
