@@ -88,6 +88,15 @@ int field_offset(const sensor_msgs::msg::PointCloud2 &msg, const std::string &na
   return -1;
 }
 
+int field_offset_f64(const sensor_msgs::msg::PointCloud2 &msg, const std::string &name) {
+  for (const auto &f : msg.fields) {
+    if (f.name == name && f.datatype == sensor_msgs::msg::PointField::FLOAT64) {
+      return static_cast<int>(f.offset);
+    }
+  }
+  return -1;
+}
+
 }  // namespace
 
 class BevfusionNode : public rclcpp::Node {
@@ -104,7 +113,7 @@ class BevfusionNode : public rclcpp::Node {
     model_name_ = declare_parameter<std::string>("model_name", "resnet50");
     image_width_ = declare_parameter<int>("image_width", 1600);
     image_height_ = declare_parameter<int>("image_height", 900);
-    lidar_topic_ = declare_parameter<std::string>("lidar_topic", "/lidar/points");
+    lidar_topic_ = declare_parameter<std::string>("lidar_topic", "/livox/lidar");
     frame_id_ = declare_parameter<std::string>("frame_id", "lidar");
     max_points_ = declare_parameter<int>("max_points", 300000);
     sync_slop_ = declare_parameter<double>("sync_slop", 0.05);
@@ -329,7 +338,8 @@ class BevfusionNode : public rclcpp::Node {
       const int oy = field_offset(*msg, "y", true);
       const int oz = field_offset(*msg, "z", true);
       const int oi = field_offset(*msg, "intensity", false);
-      const int ot = field_offset(*msg, "time", false);
+      const int ot32 = field_offset(*msg, "time", false);
+      const int ot64 = field_offset_f64(*msg, "timestamp");
 
       const size_t total = static_cast<size_t>(msg->width) * msg->height;
       const size_t cap = std::min<size_t>(total, static_cast<size_t>(max_points_));
@@ -343,7 +353,13 @@ class BevfusionNode : public rclcpp::Node {
         if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) continue;
         const float intensity =
             oi >= 0 ? *reinterpret_cast<const float *>(base + oi) : 0.0f;
-        const float time = ot >= 0 ? *reinterpret_cast<const float *>(base + ot) : 0.0f;
+        float time = 0.0f;
+        if (ot32 >= 0) {
+          time = *reinterpret_cast<const float *>(base + ot32);
+        } else if (ot64 >= 0) {
+          // Livox PointCloud2: timestamp is offset_time in nanoseconds
+          time = static_cast<float>(*reinterpret_cast<const double *>(base + ot64) * 1e-9);
+        }
         points[n * 5 + 0] = to_half(x);
         points[n * 5 + 1] = to_half(y);
         points[n * 5 + 2] = to_half(z);

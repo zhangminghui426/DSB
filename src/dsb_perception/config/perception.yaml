@@ -3,7 +3,7 @@ bevfusion_node:
     deploy_dir: ''
     model_name: resnet50
     camera_topics: [/camera/front/image_raw, /camera/front_right/image_raw, /camera/front_left/image_raw, /camera/back/image_raw, /camera/back_left/image_raw, /camera/back_right/image_raw]
-    lidar_topic: /lidar/points
+    lidar_topic: /livox/lidar
     frame_id: lidar
     sync_slop: 0.05
     max_camera_frames: 3
