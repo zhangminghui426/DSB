@@ -6,21 +6,33 @@
 // with 4×6×4×4 calibration matrices.
 // Publishes: dsb_perception/BoundingBoxArray (gravity-center boxes) and
 // visualization_msgs/MarkerArray.
+//
+// Synchronization: LiDAR frames drive inference. Each LiDAR stamp is matched
+// to the nearest cached image per camera (within sync_slop), then the frame is
+// pushed to a single-slot queue served by a worker thread. If inference is
+// slower than the LiDAR period the older pending frame is dropped.
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <limits>
 #include <memory>
+#include <optional>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <cuda_fp16.h>
-#include <dlfcn.h>
 #include <cuda_runtime.h>
+#include <dlfcn.h>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -60,11 +72,6 @@ nvtype::half to_half(float value) {
   return out;
 }
 
-bool has_field(const sensor_msgs::msg::PointCloud2 &msg, const std::string &name) {
-  return std::any_of(msg.fields.begin(), msg.fields.end(),
-                     [&](const auto &f) { return f.name == name; });
-}
-
 int field_offset(const sensor_msgs::msg::PointCloud2 &msg, const std::string &name,
                  bool required) {
   for (const auto &f : msg.fields) {
@@ -100,7 +107,8 @@ class BevfusionNode : public rclcpp::Node {
     lidar_topic_ = declare_parameter<std::string>("lidar_topic", "/lidar/points");
     frame_id_ = declare_parameter<std::string>("frame_id", "lidar");
     max_points_ = declare_parameter<int>("max_points", 300000);
-    sync_slop_ = declare_parameter<double>("sync_slop", 0.5);
+    sync_slop_ = declare_parameter<double>("sync_slop", 0.05);
+    max_camera_frames_ = declare_parameter<int>("max_camera_frames", 3);
     publish_markers_ = declare_parameter<bool>("publish_markers", true);
 
     const std::vector<std::string> default_cams = {
@@ -111,11 +119,6 @@ class BevfusionNode : public rclcpp::Node {
         "camera_topics", default_cams);
     if (camera_topics_.size() != kNumCameras) {
       throw std::runtime_error("camera_topics must contain exactly 6 topics");
-    }
-
-    image_buffers_.resize(kNumCameras);
-    for (auto &buf : image_buffers_) {
-      buf.assign(static_cast<size_t>(image_width_) * image_height_ * kImageChannels, 0);
     }
 
     load_calibration_parameters();
@@ -144,12 +147,10 @@ class BevfusionNode : public rclcpp::Node {
           matrices_callback(msg);
         });
 
-    const double rate = declare_parameter<double>("inference_rate", 10.0);
-    timer_ = create_wall_timer(
-        std::chrono::duration<double>(1.0 / std::max(0.1, rate)),
-        [this]() { inference_timer(); });
+    worker_ = std::thread([this]() { worker_loop(); });
 
-    RCLCPP_INFO(get_logger(), "model: %s/%s", deploy_dir_.c_str(), model_name_.c_str());
+    RCLCPP_INFO(get_logger(), "model: %s/model/%s", deploy_dir_.c_str(),
+                model_name_.c_str());
     RCLCPP_INFO(get_logger(), "LiDAR: %s", lidar_topic_.c_str());
     for (int i = 0; i < kNumCameras; ++i) {
       RCLCPP_INFO(get_logger(), "camera[%d]: %s", i, camera_topics_[i].c_str());
@@ -157,10 +158,28 @@ class BevfusionNode : public rclcpp::Node {
   }
 
   ~BevfusionNode() override {
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+      stop_ = true;
+    }
+    queue_cv_.notify_all();
+    if (worker_.joinable()) worker_.join();
     if (stream_ != nullptr) cudaStreamDestroy(stream_);
   }
 
  private:
+  struct ImageFrame {
+    rclcpp::Time stamp;
+    std::shared_ptr<std::vector<unsigned char>> data;
+  };
+
+  struct SyncedFrame {
+    rclcpp::Time stamp;
+    std::array<std::shared_ptr<std::vector<unsigned char>>, kNumCameras> images;
+    std::vector<nvtype::half> points;
+    int num_points = 0;
+  };
+
   void load_calibration_parameters() {
     auto load = [&](const char *name) {
       auto values = declare_parameter<std::vector<double>>(name, std::vector<double>{});
@@ -178,8 +197,6 @@ class BevfusionNode : public rclcpp::Node {
   }
 
   void create_core() {
-    // The optional layernorm plugin is loaded by deploy/src/main.cpp; keep
-    // the same behavior when the fp32 head plan references it.
     if (dlopen("libcustom_layernorm.so", RTLD_NOW) == nullptr) {
       RCLCPP_WARN(get_logger(), "libcustom_layernorm.so not loaded: %s", dlerror());
     }
@@ -209,7 +226,6 @@ class BevfusionNode : public rclcpp::Node {
     p.geometry.geometry_dim = nvtype::Int3(360, 360, 80);
     p.geometry.feat_width = 88;
     p.geometry.feat_height = 32;
-    // geometry works in the normalized image space (704x256)
     p.geometry.image_width = 704;
     p.geometry.image_height = 256;
     p.geometry.num_camera = kNumCameras;
@@ -261,14 +277,15 @@ class BevfusionNode : public rclcpp::Node {
                            msg->width, msg->height, image_width_, image_height_);
       return;
     }
-    auto &dst = image_buffers_[index];
+    auto buf = std::make_shared<std::vector<unsigned char>>(
+        static_cast<size_t>(image_width_) * image_height_ * kImageChannels);
     const auto &src = msg->data;
     const size_t row_bytes = static_cast<size_t>(image_width_) * kImageChannels;
     if (msg->encoding == "rgb8" || msg->encoding == "bgr8") {
       const bool bgr = msg->encoding == "bgr8";
       for (int y = 0; y < image_height_; ++y) {
         const unsigned char *row = src.data() + static_cast<size_t>(y) * msg->step;
-        unsigned char *out = dst.data() + static_cast<size_t>(y) * row_bytes;
+        unsigned char *out = buf->data() + static_cast<size_t>(y) * row_bytes;
         if (!bgr) {
           std::memcpy(out, row, row_bytes);
         } else {
@@ -283,7 +300,7 @@ class BevfusionNode : public rclcpp::Node {
       const bool bgr = msg->encoding == "bgra8";
       for (int y = 0; y < image_height_; ++y) {
         const unsigned char *row = src.data() + static_cast<size_t>(y) * msg->step;
-        unsigned char *out = dst.data() + static_cast<size_t>(y) * row_bytes;
+        unsigned char *out = buf->data() + static_cast<size_t>(y) * row_bytes;
         for (int x = 0; x < image_width_; ++x) {
           out[x * 3 + 0] = row[x * 4 + (bgr ? 2 : 0)];
           out[x * 3 + 1] = row[x * 4 + 1];
@@ -296,7 +313,14 @@ class BevfusionNode : public rclcpp::Node {
                            msg->encoding.c_str());
       return;
     }
-    image_ready_[index] = true;
+
+    ImageFrame frame;
+    frame.stamp = rclcpp::Time(msg->header.stamp);
+    frame.data = buf;
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    auto &cache = image_cache_[index];
+    cache.push_back(std::move(frame));
+    while (static_cast<int>(cache.size()) > max_camera_frames_) cache.pop_front();
   }
 
   void lidar_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) {
@@ -309,7 +333,7 @@ class BevfusionNode : public rclcpp::Node {
 
       const size_t total = static_cast<size_t>(msg->width) * msg->height;
       const size_t cap = std::min<size_t>(total, static_cast<size_t>(max_points_));
-      lidar_points_.assign(cap * 5, nvtype::half{});
+      std::vector<nvtype::half> points(cap * 5, nvtype::half{});
       size_t n = 0;
       for (size_t k = 0; k < total && n < cap; ++k) {
         const auto *base = msg->data.data() + k * msg->point_step;
@@ -320,24 +344,69 @@ class BevfusionNode : public rclcpp::Node {
         const float intensity =
             oi >= 0 ? *reinterpret_cast<const float *>(base + oi) : 0.0f;
         const float time = ot >= 0 ? *reinterpret_cast<const float *>(base + ot) : 0.0f;
-        lidar_points_[n * 5 + 0] = to_half(x);
-        lidar_points_[n * 5 + 1] = to_half(y);
-        lidar_points_[n * 5 + 2] = to_half(z);
-        lidar_points_[n * 5 + 3] = to_half(intensity);
-        lidar_points_[n * 5 + 4] = to_half(time);
+        points[n * 5 + 0] = to_half(x);
+        points[n * 5 + 1] = to_half(y);
+        points[n * 5 + 2] = to_half(z);
+        points[n * 5 + 3] = to_half(intensity);
+        points[n * 5 + 4] = to_half(time);
         ++n;
       }
-      lidar_points_.resize(n * 5);
-      lidar_num_points_ = static_cast<int>(n);
-      lidar_stamp_ = msg->header.stamp;
-      lidar_ready_ = n > 0;
       if (n == 0) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
                              "LiDAR cloud has no valid points");
+        return;
       }
+      points.resize(n * 5);
+
+      const rclcpp::Time lidar_stamp(msg->header.stamp);
+      SyncedFrame synced;
+      synced.stamp = lidar_stamp;
+      synced.points = std::move(points);
+      synced.num_points = static_cast<int>(n);
+
+      std::lock_guard<std::mutex> lock(cache_mutex_);
+      for (int i = 0; i < kNumCameras; ++i) {
+        const auto &cache = image_cache_[i];
+        if (cache.empty()) {
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                               "sync: camera[%d] has no frame, drop LiDAR frame", i);
+          return;
+        }
+        if (lidar_stamp.nanoseconds() <= 0) {
+          synced.images[i] = cache.back().data;
+          continue;
+        }
+        auto best = cache.begin();
+        double best_diff = std::numeric_limits<double>::max();
+        for (auto it = cache.begin(); it != cache.end(); ++it) {
+          double diff = std::abs((it->stamp - lidar_stamp).seconds());
+          if (diff < best_diff) {
+            best_diff = diff;
+            best = it;
+          }
+        }
+        if (best_diff > sync_slop_) {
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                               "sync: camera[%d] nearest frame %.1f ms away (>%.1f), drop",
+                               i, best_diff * 1000.0, sync_slop_ * 1000.0);
+          return;
+        }
+        synced.images[i] = best->data;
+      }
+
+      {
+        std::lock_guard<std::mutex> qlock(queue_mutex_);
+        if (pending_) {
+          ++dropped_frames_;
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                               "inference busy, drop pending frame (%ld dropped)",
+                               dropped_frames_);
+        }
+        pending_ = std::move(synced);
+      }
+      queue_cv_.notify_one();
     } catch (const std::exception &e) {
       RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 5000, "LiDAR: %s", e.what());
-      lidar_ready_ = false;
     }
   }
 
@@ -348,6 +417,7 @@ class BevfusionNode : public rclcpp::Node {
                   msg->data.size());
       return;
     }
+    std::lock_guard<std::mutex> lock(core_mutex_);
     std::copy_n(msg->data.begin(), kMatrixFloats, camera2lidar_.begin());
     std::copy_n(msg->data.begin() + kMatrixFloats, kMatrixFloats,
                 camera_intrinsics_.begin());
@@ -360,36 +430,39 @@ class BevfusionNode : public rclcpp::Node {
     RCLCPP_INFO(get_logger(), "calibration matrices updated");
   }
 
-  void inference_timer() {
-    if (!core_ || !lidar_ready_) return;
-    for (int i = 0; i < kNumCameras; ++i) {
-      if (!image_ready_[i]) return;
-    }
-    const rclcpp::Time lidar_time(lidar_stamp_);
-    if (lidar_time.nanoseconds() > 0 &&
-        (now() - lidar_time).seconds() > sync_slop_) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-                           "LiDAR data is stale (%.2fs), skip",
-                           (now() - lidar_time).seconds());
-      return;
-    }
+  void worker_loop() {
+    while (true) {
+      SyncedFrame frame;
+      {
+        std::unique_lock<std::mutex> lock(queue_mutex_);
+        queue_cv_.wait(lock, [this]() { return stop_ || pending_.has_value(); });
+        if (stop_ && !pending_) return;
+        frame = std::move(*pending_);
+        pending_.reset();
+      }
 
-    std::array<const unsigned char *, kNumCameras> images{};
-    for (int i = 0; i < kNumCameras; ++i) images[i] = image_buffers_[i].data();
+      std::array<const unsigned char *, kNumCameras> images{};
+      for (int i = 0; i < kNumCameras; ++i) images[i] = frame.images[i]->data();
 
-    auto boxes = core_->forward(images.data(), lidar_points_.data(),
-                                lidar_num_points_, stream_);
-    cudaStreamSynchronize(stream_);
-    publish(boxes);
-    ++frame_count_;
-    if (frame_count_ % 10 == 1) {
-      RCLCPP_INFO(get_logger(), "frame %ld: %zu boxes", frame_count_, boxes.size());
+      std::vector<bevfusion::head::transbbox::BoundingBox> boxes;
+      {
+        std::lock_guard<std::mutex> lock(core_mutex_);
+        boxes = core_->forward(images.data(), frame.points.data(), frame.num_points,
+                               stream_);
+        cudaStreamSynchronize(stream_);
+      }
+      publish(boxes, frame.stamp);
+      ++frame_count_;
+      if (frame_count_ % 10 == 1) {
+        RCLCPP_INFO(get_logger(), "frame %ld: %zu boxes", frame_count_, boxes.size());
+      }
     }
   }
 
-  void publish(const std::vector<bevfusion::head::transbbox::BoundingBox> &boxes) {
+  void publish(const std::vector<bevfusion::head::transbbox::BoundingBox> &boxes,
+               const rclcpp::Time &stamp) {
     dsb_perception::msg::BoundingBoxArray out;
-    out.header.stamp = lidar_stamp_;
+    out.header.stamp = stamp;
     out.header.frame_id = frame_id_;
     out.boxes.reserve(boxes.size());
     for (const auto &b : boxes) {
@@ -447,7 +520,8 @@ class BevfusionNode : public rclcpp::Node {
   int image_width_ = 1600;
   int image_height_ = 900;
   int max_points_ = 300000;
-  double sync_slop_ = 0.5;
+  double sync_slop_ = 0.05;
+  int max_camera_frames_ = 3;
   bool publish_markers_ = true;
   std::string lidar_topic_;
   std::string frame_id_;
@@ -458,17 +532,20 @@ class BevfusionNode : public rclcpp::Node {
   std::array<float, kMatrixFloats> lidar2image_{};
   std::array<float, kMatrixFloats> img_aug_matrix_{};
 
-  std::vector<std::vector<unsigned char>> image_buffers_;
-  std::array<bool, kNumCameras> image_ready_{};
+  std::mutex cache_mutex_;
+  std::array<std::deque<ImageFrame>, kNumCameras> image_cache_;
 
-  std::vector<nvtype::half> lidar_points_;
-  int lidar_num_points_ = 0;
-  bool lidar_ready_ = false;
-  builtin_interfaces::msg::Time lidar_stamp_;
+  std::mutex queue_mutex_;
+  std::condition_variable queue_cv_;
+  std::optional<SyncedFrame> pending_;
+  bool stop_ = false;
+  long dropped_frames_ = 0;
 
+  std::mutex core_mutex_;
   std::shared_ptr<bevfusion::Core> core_;
   cudaStream_t stream_ = nullptr;
   long frame_count_ = 0;
+  std::thread worker_;
 
   std::array<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr, kNumCameras>
       image_subs_;
@@ -476,7 +553,6 @@ class BevfusionNode : public rclcpp::Node {
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr matrices_sub_;
   rclcpp::Publisher<dsb_perception::msg::BoundingBoxArray>::SharedPtr boxes_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_pub_;
-  rclcpp::TimerBase::SharedPtr timer_;
 };
 
 }  // namespace dsb_perception

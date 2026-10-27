@@ -34,7 +34,7 @@ def load_tensor(path):
 
 
 class ExamplePublisher(Node):
-    def __init__(self, data_dir, rate):
+    def __init__(self, data_dir, camera_rate, lidar_rate):
         super().__init__("example_publisher")
         self.images = [
             np.asarray(PILImage.open(os.path.join(data_dir, f)).convert("RGB"))
@@ -45,13 +45,15 @@ class ExamplePublisher(Node):
             self.create_publisher(Image, topic, 10) for _, topic in CAMS
         ]
         self.lidar_pub = self.create_publisher(PointCloud2, "/lidar/points", 10)
-        self.timer = self.create_timer(1.0 / rate, self.publish)
+        self.cam_timer = self.create_timer(1.0 / camera_rate, self.publish_cameras)
+        self.lidar_timer = self.create_timer(1.0 / lidar_rate, self.publish_lidar)
         self.frame = 0
         self.get_logger().info(
-            f"publishing {len(CAMS)} cameras + {len(self.points)} LiDAR points"
+            f"publishing {len(CAMS)} cameras @{camera_rate} Hz + "
+            f"{len(self.points)} LiDAR points @{lidar_rate} Hz"
         )
 
-    def publish(self):
+    def publish_cameras(self):
         stamp = self.get_clock().now().to_msg()
         for pub, img in zip(self.image_pubs, self.images):
             msg = Image()
@@ -64,14 +66,15 @@ class ExamplePublisher(Node):
             msg.data = img.tobytes()
             pub.publish(msg)
 
+    def publish_lidar(self):
         header = PointCloud2().header
-        header.stamp = stamp
+        header.stamp = self.get_clock().now().to_msg()
         header.frame_id = "lidar"
         cloud = point_cloud2.create_cloud(header, FIELDS, self.points[:, :5])
         self.lidar_pub.publish(cloud)
         self.frame += 1
         if self.frame % 10 == 1:
-            self.get_logger().info(f"frame {self.frame}")
+            self.get_logger().info(f"lidar frame {self.frame}")
 
 
 def main():
@@ -83,10 +86,11 @@ def main():
             os.path.join(os.path.dirname(__file__), "../../../3rdparty/deeplearning/outputs/example-data"),
         ),
     )
-    parser.add_argument("--rate", type=float, default=10.0)
+    parser.add_argument("--camera-rate", type=float, default=30.0)
+    parser.add_argument("--lidar-rate", type=float, default=10.0)
     args = parser.parse_args()
     rclpy.init()
-    node = ExamplePublisher(args.data_dir, args.rate)
+    node = ExamplePublisher(args.data_dir, args.camera_rate, args.lidar_rate)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

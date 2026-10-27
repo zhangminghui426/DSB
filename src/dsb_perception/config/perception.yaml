@@ -5,8 +5,8 @@ bevfusion_node:
     camera_topics: [/camera/front/image_raw, /camera/front_right/image_raw, /camera/front_left/image_raw, /camera/back/image_raw, /camera/back_left/image_raw, /camera/back_right/image_raw]
     lidar_topic: /lidar/points
     frame_id: lidar
-    inference_rate: 10.0
-    sync_slop: 0.5
+    sync_slop: 0.05
+    max_camera_frames: 3
     max_points: 300000
     publish_markers: true
     image_width: 1600

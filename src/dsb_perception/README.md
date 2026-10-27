@@ -81,6 +81,26 @@ ros2 topic echo /bevfusion_node/boxes --once
 
 应看到约 39–41 个框（示例帧）。
 
+## 数据同步（30 Hz 相机 / 10 Hz LiDAR / 50 ms 推理）
+
+节点不是“取最新帧定时推理”，而是 **以 LiDAR 为基准做时间戳同步**：
+
+1. 每路相机维护一个按时间戳排序的缓存（默认 3 帧，30 Hz 约 100 ms）。
+2. 每来一帧 LiDAR（10 Hz），对每路相机选时间戳最接近的图像；偏差超过
+   `sync_slop`（默认 50 ms）就丢弃该 LiDAR 帧。
+3. 同步好的帧放入 **单槽队列**，由独立工作线程执行 TRT 推理，不阻塞 ROS 回调。
+4. 推理 50 ms < LiDAR 周期 100 ms，因此正常情况下每个 LiDAR 帧都能处理，
+   输出约 10 Hz；相机 30 Hz 中每 3 帧只用 1 帧（最近邻）。
+5. 如果某次推理超过 LiDAR 周期，新帧会覆盖未处理的旧帧（drop），
+   不会积压延迟。
+
+因此输出频率由 **LiDAR 频率和推理耗时** 决定，而不是相机频率；相机只提供
+最近时间戳的视觉观测。
+
+> 测试用 `publish_example.py` 是 Python/DDS 回放，6 路 1600×900 原图
+> 30 Hz 的数据量约 0.8 GB/s，回放本身可能达不到 30 Hz；实车请以真实驱动
+> 和硬件时间戳为准。
+
 ## 参数
 
 见 `config/perception.yaml`：
@@ -89,7 +109,8 @@ ros2 topic echo /bevfusion_node/boxes --once
 - `model_name`：产物目录名（当前 `resnet50`，实际相机骨干是 Swin-T）
 - `camera_topics`：6 路相机话题
 - `lidar_topic`、`frame_id`
-- `inference_rate`、`sync_slop`
+- `sync_slop`：相机/雷达时间戳最大允许偏差（秒）
+- `max_camera_frames`：每路相机缓存帧数
 - `max_points`：LiDAR 最大点数
 - `publish_markers`
 
