@@ -24,6 +24,10 @@ env/
 
 # 日志
 logs/
+log/
+
+# ROS2 colcon
+install/
 
 # ide
 .vscode/

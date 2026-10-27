@@ -7,7 +7,7 @@ BEV 感知（BEVFusion + FlashOCC）+ 雷达-相机标定（fast_calib）统一�
 ```
 DSB/
 ├── app/                     # Streamlit UI（上传 mcap、运行标定、3D 预览）
-├── src/                     # 工程代码（预留 ROS2 集成）
+├── src/                     # ROS2 集成（dsb_perception：相机+雷达 -> TRT -> 3D 框）
 ├── 3rdparty/
 │   ├── deeplearning/        # 深度学习模型库
 │   │   ├── models/          # BEVFusion/FlashOCC 模型 + SECOND 标定板检测器
@@ -80,13 +80,30 @@ cd 3rdparty/fast_calib && python scripts/calib_lidar_cmaera.py --config config/c
 cd 3rdparty/deeplearning/models/calib_board_detector && python train.py
 ```
 
+## ROS2 推理节点
+
+需先完成上面的 deploy 构建（`libbevfusion_core.so` + plans）。
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon build --base-paths src --packages-select dsb_perception \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release \
+               -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+               -DPython3_EXECUTABLE=/usr/bin/python3
+source install/setup.bash
+ros2 launch dsb_perception perception.launch.py
+```
+
+订阅 6 路相机 + LiDAR，发布 `dsb_perception/BoundingBoxArray` 与 RViz MarkerArray；
+标定矩阵/话题配置见 [src/dsb_perception/README.md](src/dsb_perception/README.md)。
+
 ## 详细文档
 
 - [3rdparty/deeplearning/README.md](3rdparty/deeplearning/README.md) — 模型库结构、训练/评估
 - [3rdparty/deeplearning/deploy/README.md](3rdparty/deeplearning/deploy/README.md) — TRT 部署（ONNX 导出 + C++ 推理）
 - [3rdparty/fast_calib/README.md](3rdparty/fast_calib/README.md) — 雷达-相机外参标定
 - [tools/README.md](tools/README.md) — 工程工具说明
-- [src/README.md](src/README.md) — ROS2 集成预留说明
+- [src/dsb_perception/README.md](src/dsb_perception/README.md) — ROS2 推理节点（订阅相机/雷达，发布 3D 框）
 - [3rdparty/deeplearning/docs/MODEL_IO.md](3rdparty/deeplearning/docs/MODEL_IO.md) — 模型 I/O 约定
 
 ## 已验证功能
