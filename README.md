@@ -99,6 +99,7 @@ ros2 launch dsb_perception perception.launch.py
 
 ## 详细文档
 
+- [docs/dsb_tech_solution.pdf](docs/dsb_tech_solution.pdf) — 整体技术方案（离线训练/导出 + 在线 ROS2/TensorRT）
 - [3rdparty/deeplearning/README.md](3rdparty/deeplearning/README.md) — 模型库结构、训练/评估
 - [3rdparty/deeplearning/deploy/README.md](3rdparty/deeplearning/deploy/README.md) — TRT 部署（ONNX 导出 + C++ 推理）
 - [3rdparty/fast_calib/README.md](3rdparty/fast_calib/README.md) — 雷达-相机外参标定
